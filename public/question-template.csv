@@ -1,0 +1,5 @@
+quiz_pack_id,pack_title,question_id,type,question_text,choice_a,choice_b,choice_c,choice_d,correct_answers,media_url,time_limit_sec,base_points,explanation,sub_1_question,sub_1_answers,sub_2_question,sub_2_answers,sub_3_question,sub_3_answers
+my-first-pack,My First Pack,,MCQ_SINGLE,What is the capital of France?,Berlin,Madrid,Paris,Rome,C,,20,,,,,,,,
+my-first-pack,,,MCQ_MULTI,Which of these are fruits?,Apple,Carrot,Banana,Potato,A|C,,30,,,,,,,,
+my-first-pack,,,TEXT_INPUT,Who wrote Romeo and Juliet?,,,,,William Shakespeare|Shakespeare,,30,,Fuzzy matching forgives small typos,,,,,,
+my-first-pack,,,SUB_QUESTIONS_TEXT,Name the capital city of each country,,,,,,,60,,Each part is marked on its own and the points add up,Australia,Canberra,Canada,Ottawa,Thailand,Bangkok|กรุงเทพมหานคร|กรุงเทพ

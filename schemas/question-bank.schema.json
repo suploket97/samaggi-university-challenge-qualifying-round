@@ -1,0 +1,601 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pub-quiz.local/schemas/question-bank.schema.json",
+  "title": "Question Bank Import",
+  "description": "Validates a bulk import (from CSV/Excel converted to JSON, or a hand-written JSON file) into the Question Bank. The bank lives in Postgres and is never readable by players; only the server copies the public part of a question into live room state.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "quiz_packs",
+    "questions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "quiz_packs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/QuizPack"
+      }
+    },
+    "questions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/Question"
+      }
+    }
+  },
+  "$defs": {
+    "Id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{2,63}$",
+      "description": "Stable slug id, e.g. 'geo-001'. Stable ids let a re-import update rows instead of duplicating them."
+    },
+    "QuizPack": {
+      "type": "object",
+      "required": [
+        "quiz_pack_id",
+        "title"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "quiz_pack_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "default_time_limit_sec": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 600,
+          "default": 30
+        },
+        "default_base_points": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 100
+        },
+        "speed_tiers": {
+          "$ref": "#/$defs/SpeedTiers"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "SpeedTiers": {
+      "description": "Bonus points for a fully correct answer submitted within N seconds of the question opening. Evaluated in order; the first tier whose within_sec is met wins. After the last tier: base points only.",
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": [
+          "within_sec",
+          "bonus"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "within_sec": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "bonus": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "default": [
+        {
+          "within_sec": 5,
+          "bonus": 20
+        },
+        {
+          "within_sec": 10,
+          "bonus": 10
+        }
+      ]
+    },
+    "Choice": {
+      "type": "object",
+      "required": [
+        "choice_id",
+        "text"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "choice_id": {
+          "type": "string",
+          "pattern": "^[A-Z]$",
+          "description": "Letter shown on the player's button, A–Z (up to 26 choices)."
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Choice text. May be empty when the choice has a picture."
+        },
+        "media_url": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "Optional picture for this choice (https URL or /path)."
+        }
+      },
+      "anyOf": [
+        {
+          "properties": {
+            "text": {
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "required": [
+            "media_url"
+          ]
+        }
+      ]
+    },
+    "Question": {
+      "type": "object",
+      "required": [
+        "question_id",
+        "quiz_pack_id",
+        "type",
+        "question_text"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "question_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "quiz_pack_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Position within the pack. If omitted, import order is used."
+        },
+        "type": {
+          "enum": [
+            "MCQ_SINGLE",
+            "MCQ_MULTI",
+            "TEXT_INPUT",
+            "SUB_QUESTIONS_TEXT"
+          ]
+        },
+        "question_text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 3000
+        },
+        "media_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uri-reference",
+          "description": "Image/audio/video shown on /stage. A full https:// URL, or a path like /media/pic.png for files in the app's public folder."
+        },
+        "media_type": {
+          "enum": [
+            "image",
+            "audio",
+            "video"
+          ]
+        },
+        "show_media_on_player": {
+          "type": "boolean",
+          "description": "Show the question's media on phones. Defaults to true for images, false for audio/video."
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Choice"
+          },
+          "description": "Required for MCQ_SINGLE / MCQ_MULTI (2–26 choices, lettered A–Z). Must be absent for TEXT_INPUT."
+        },
+        "correct_answers_array": {
+          "type": "array",
+          "minItems": 0,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": "MCQ: the correct choice letters A–Z (e.g. [\"B\"] or [\"A\",\"C\"]). TEXT_INPUT: accepted answers; the FIRST entry is the canonical answer shown on stage, the rest are aliases (e.g. [\"Leonardo da Vinci\", \"da Vinci\", \"Leonardo\"]). SUB_QUESTIONS_TEXT: leave empty; each part has its own answers."
+        },
+        "text_matching": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "TEXT_INPUT only. Controls normalisation and fuzzy matching.",
+          "properties": {
+            "fuzzy": {
+              "type": "boolean",
+              "default": true
+            },
+            "max_typos": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2,
+              "default": 2,
+              "description": "Upper bound on Levenshtein distance. Also scaled by answer length: <=4 chars exact, 5-8 chars 1 typo, 9+ chars up to max_typos. Pure numbers never use fuzzy matching."
+            },
+            "ignore_articles": {
+              "type": "boolean",
+              "default": true,
+              "description": "Drop leading 'the', 'a', 'an' before comparing."
+            }
+          }
+        },
+        "multi_scoring": {
+          "enum": [
+            "PARTIAL",
+            "ALL_OR_NOTHING"
+          ],
+          "default": "PARTIAL",
+          "description": "MCQ_MULTI only. PARTIAL: each correct pick earns 1/k of base, each wrong pick costs 1/k, floored at 0. Speed bonus only for a fully correct answer."
+        },
+        "time_limit_sec": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 600
+        },
+        "base_points": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "speed_tiers": {
+          "$ref": "#/$defs/SpeedTiers"
+        },
+        "explanation": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Optional fun fact shown on stage at reveal."
+        },
+        "difficulty": {
+          "enum": [
+            "easy",
+            "medium",
+            "hard"
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "sub_questions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/SubQuestion"
+          },
+          "description": "SUB_QUESTIONS_TEXT only: the parts. The question's score is the sum of the parts answered correctly."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "TEXT_INPUT"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "choices"
+              ]
+            },
+            "properties": {
+              "multi_scoring": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "MCQ_SINGLE",
+                  "MCQ_MULTI"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "choices"
+            ],
+            "properties": {
+              "choices": {
+                "minItems": 2,
+                "maxItems": 26
+              },
+              "correct_answers_array": {
+                "items": {
+                  "pattern": "^[A-Z]$"
+                }
+              },
+              "text_matching": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "MCQ_SINGLE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "correct_answers_array": {
+                "maxItems": 1
+              },
+              "multi_scoring": false
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "media_url"
+            ],
+            "properties": {
+              "media_url": {
+                "type": "string"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "media_type"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "MCQ_SINGLE",
+                  "MCQ_MULTI",
+                  "TEXT_INPUT"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "correct_answers_array"
+            ],
+            "properties": {
+              "correct_answers_array": {
+                "minItems": 1
+              },
+              "sub_questions": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "SUB_QUESTIONS_TEXT"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "sub_questions"
+            ],
+            "not": {
+              "required": [
+                "choices"
+              ]
+            },
+            "properties": {
+              "multi_scoring": false,
+              "correct_answers_array": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "SubQuestion": {
+      "type": "object",
+      "required": [
+        "sub_id",
+        "prompt",
+        "correct_answers_array"
+      ],
+      "additionalProperties": false,
+      "description": "One part of a SUB_QUESTIONS_TEXT question: its own answer box on the phone, marked on its own.",
+      "properties": {
+        "sub_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,16}$",
+          "description": "Stable id within the question, e.g. \"1\"."
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "correct_answers_array": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": "Accepted answers for this part; the first is shown on the big screen."
+        },
+        "points": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "Points for this part. Default: the question's base points split evenly."
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schema_version": 1,
+      "quiz_packs": [
+        {
+          "quiz_pack_id": "friday-night-1",
+          "title": "Friday Night Round 1",
+          "default_time_limit_sec": 30
+        }
+      ],
+      "questions": [
+        {
+          "question_id": "fn1-001",
+          "quiz_pack_id": "friday-night-1",
+          "type": "MCQ_SINGLE",
+          "question_text": "Which planet has the most known moons?",
+          "choices": [
+            {
+              "choice_id": "A",
+              "text": "Jupiter"
+            },
+            {
+              "choice_id": "B",
+              "text": "Saturn"
+            },
+            {
+              "choice_id": "C",
+              "text": "Uranus"
+            },
+            {
+              "choice_id": "D",
+              "text": "Neptune"
+            }
+          ],
+          "correct_answers_array": [
+            "B"
+          ]
+        },
+        {
+          "question_id": "fn1-002",
+          "quiz_pack_id": "friday-night-1",
+          "type": "MCQ_MULTI",
+          "question_text": "Which of these are primary colours of light?",
+          "choices": [
+            {
+              "choice_id": "A",
+              "text": "Red"
+            },
+            {
+              "choice_id": "B",
+              "text": "Yellow"
+            },
+            {
+              "choice_id": "C",
+              "text": "Green"
+            },
+            {
+              "choice_id": "D",
+              "text": "Blue"
+            }
+          ],
+          "correct_answers_array": [
+            "A",
+            "C",
+            "D"
+          ],
+          "multi_scoring": "PARTIAL"
+        },
+        {
+          "question_id": "fn1-003",
+          "quiz_pack_id": "friday-night-1",
+          "type": "TEXT_INPUT",
+          "question_text": "Who painted this?",
+          "media_url": "https://cdn.example.com/q/mona-lisa.jpg",
+          "media_type": "image",
+          "correct_answers_array": [
+            "Leonardo da Vinci",
+            "da Vinci",
+            "Leonardo"
+          ],
+          "text_matching": {
+            "fuzzy": true,
+            "max_typos": 2
+          },
+          "time_limit_sec": 20
+        },
+        {
+          "question_id": "fn1-004",
+          "quiz_pack_id": "friday-night-1",
+          "type": "SUB_QUESTIONS_TEXT",
+          "question_text": "Name the capital city of each country.",
+          "sub_questions": [
+            {
+              "sub_id": "1",
+              "prompt": "Australia",
+              "correct_answers_array": [
+                "Canberra"
+              ]
+            },
+            {
+              "sub_id": "2",
+              "prompt": "Canada",
+              "correct_answers_array": [
+                "Ottawa"
+              ]
+            },
+            {
+              "sub_id": "3",
+              "prompt": "Thailand",
+              "correct_answers_array": [
+                "Bangkok",
+                "Krung Thep",
+                "กรุงเทพมหานคร",
+                "กรุงเทพ"
+              ]
+            },
+            {
+              "sub_id": "4",
+              "prompt": "Brazil",
+              "correct_answers_array": [
+                "Brasília",
+                "Brasilia"
+              ]
+            }
+          ],
+          "time_limit_sec": 60
+        }
+      ]
+    }
+  ]
+}

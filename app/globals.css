@@ -1,0 +1,130 @@
+@import "tailwindcss";
+
+@theme {
+  /* Game-show theme. Fonts:
+     - sans: Inter for body and interface text
+     - display: question text, choices and answers (unchanged; Thai falls through to Noto Sans Thai)
+     - headline: Bebas Neue for titles and headers only
+     - mono: Share Tech Mono for scores, timers and other numeric readouts */
+  --font-sans: var(--font-inter), var(--font-thai), "Noto Sans Thai", "Leelawadee UI", "Thonburi", ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-outfit), var(--font-thai), "Noto Sans Thai", "Leelawadee UI", "Thonburi", ui-sans-serif, system-ui, sans-serif;
+  --font-headline: var(--font-bebas), "Bebas Neue", var(--font-thai), "Noto Sans Thai", Impact, "Arial Narrow", sans-serif;
+  --font-mono: var(--font-stm), "Share Tech Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Near-black everywhere by default. */
+  --color-ink: #0a0a0c;
+  --color-panel: #131318;
+  --color-panel-2: #1c1c23;
+  --color-line: #2a2a33;
+  --color-muted: #9b9ba8;
+
+  /* Accents are semantic, never decorative. */
+  --color-gold: #f59e0b;      /* amber: primary actions, your team */
+  --color-gold-deep: #b45309;
+  --color-sky: #38bdf8;       /* secondary highlights */
+  --color-good: #10b981;      /* emerald: success, connected */
+  --color-bad: #f43f5e;       /* rose: errors, danger, warnings */
+  --color-partial: #38bdf8;   /* partly right: a secondary highlight, not a warning */
+  --color-violet: #8b5cf6;    /* one-off accent */
+
+  /* Metallic tiers, reserved for win moments. */
+  --color-metal-gold: #ffd700;
+  --color-metal-bronze: #cd7f32;
+  --color-metal-silver: #c0c0c0;
+
+  --animate-pop: pop 420ms cubic-bezier(0.2, 0.9, 0.3, 1.3) both;
+  --animate-rise: rise 500ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-glow: glow 2.4s ease-in-out infinite;
+  --animate-shake: shake 480ms ease-in-out both;
+}
+
+@keyframes pop {
+  0% { transform: scale(0.6); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes rise {
+  0% { transform: translateY(24px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(16 185 129 / 0.0); }
+  50% { box-shadow: 0 0 48px 6px rgb(16 185 129 / 0.35); }
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-10px); }
+  40%, 80% { transform: translateX(10px); }
+}
+@keyframes dots {
+  0%, 80%, 100% { transform: scale(0.4); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+html, body {
+  background: var(--color-ink);
+  color: #f4f4f5;
+}
+body {
+  background-image: linear-gradient(180deg, #0a0a0c 0%, #131318 100%);
+  background-attachment: fixed;
+  min-height: 100dvh;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Bebas Neue has a single weight: never fake a bold. Always uppercase and tracked out. */
+.font-headline {
+  font-weight: 400 !important;
+  font-synthesis: none;
+  text-transform: uppercase;
+  letter-spacing: 0.045em;
+  line-height: 1;
+}
+.font-mono { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+
+/* ---- Metallic win-moment treatments (qualification + final results only) ---- */
+.bg-metal-gold { background: radial-gradient(ellipse at 50% 35%, #4d3a00 0%, #1a1400 55%, #050400 100%); }
+.bg-metal-bronze { background: radial-gradient(ellipse at 50% 35%, #4a2f18 0%, #1a1008 55%, #0a0603 100%); }
+.text-metal-gold { color: #ffd700; text-shadow: 0 0 18px rgb(255 215 0 / 0.55), 0 0 56px rgb(255 215 0 / 0.3); }
+.text-metal-bronze { color: #cd7f32; text-shadow: 0 0 18px rgb(205 127 50 / 0.55), 0 0 56px rgb(205 127 50 / 0.3); }
+.card-metal-gold {
+  background: linear-gradient(135deg, #ffe45c 0%, #ffd700 30%, #b8860b 70%, #ffd700 100%);
+  color: #1a1400;
+  box-shadow: 0 0 32px rgb(255 215 0 / 0.35), inset 0 1px 0 rgb(255 255 255 / 0.5);
+}
+.card-metal-bronze {
+  background: linear-gradient(135deg, #e7a567 0%, #cd7f32 35%, #8a5220 70%, #cd7f32 100%);
+  color: #1a1008;
+  box-shadow: 0 0 28px rgb(205 127 50 / 0.3), inset 0 1px 0 rgb(255 255 255 / 0.35);
+}
+.card-metal-silver {
+  background: linear-gradient(135deg, #f5f7fa 0%, #c0c0c0 35%, #8e9299 70%, #d9dde2 100%);
+  color: #16181c;
+  box-shadow: 0 0 28px rgb(192 192 192 / 0.35), inset 0 1px 0 rgb(255 255 255 / 0.6);
+}
+.particles { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.particles span {
+  position: absolute;
+  bottom: -12px;
+  border-radius: 9999px;
+  animation-name: float-up;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+@keyframes float-up {
+  0% { transform: translate3d(0, 0, 0) scale(0.6); opacity: 0; }
+  12% { opacity: 1; }
+  100% { transform: translate3d(var(--drift, 0px), -110vh, 0) scale(1.1); opacity: 0; }
+}
+
+.no-select { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.tabular { font-variant-numeric: tabular-nums; }
+.loading-dot { animation: dots 1.4s infinite ease-in-out both; }
+.loading-dot:nth-child(1) { animation-delay: -0.32s; }
+.loading-dot:nth-child(2) { animation-delay: -0.16s; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
+}
+
+/* FitText measures real sizes: entrance animations would look like overflow. */
+[data-measuring] *, [data-measuring] { animation: none !important; transition: none !important; }

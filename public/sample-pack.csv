@@ -1,0 +1,13 @@
+quiz_pack_id,pack_title,type,question_text,choice_a,choice_b,choice_c,choice_d,correct_answers,media_url,time_limit_sec,explanation
+sample-pub-night,Sample Round,MCQ_SINGLE,What is the capital of Australia?,Sydney,Canberra,Melbourne,Perth,B,,20,Canberra was purpose-built as a compromise between Sydney and Melbourne.
+sample-pub-night,,MCQ_SINGLE,Which planet has the most known moons?,Jupiter,Saturn,Uranus,Neptune,B,,20,
+sample-pub-night,,TEXT_INPUT,Who painted the Mona Lisa?,,,,,Leonardo da Vinci|da Vinci|Leonardo,,30,Small typos like 'Leonardo da Vinchi' are still accepted.
+sample-pub-night,,MCQ_MULTI,Which of these are primary colours of light? (pick all that apply),Red,Yellow,Green,Blue,A|C|D,,30,Partial credit is given for each correct pick.
+sample-pub-night,,MCQ_SINGLE,Which country's flag is this?,Japan,Bangladesh,South Korea,Palau,A,/media/flag-sample.svg,20,
+sample-pub-night,,TEXT_INPUT,What is the chemical symbol for gold?,,,,,Au,,20,From the Latin 'aurum'.
+sample-pub-night,,TEXT_INPUT,In which year did the Berlin Wall fall?,,,,,1989,,25,
+sample-pub-night,,MCQ_MULTI,Which of these animals are mammals?,Dolphin,Shark,Bat,Penguin,A|C,,30,
+sample-pub-night,,MCQ_SINGLE,How many sides does a hexagon have?,5,6,7,8,B,,15,
+sample-pub-night,,TEXT_INPUT,What is the largest ocean on Earth?,,,,,Pacific Ocean|Pacific,,25,
+sample-pub-night,,MCQ_SINGLE,Which is the longest river in South America?,Paraná,Orinoco,Amazon,Magdalena,C,,20,
+sample-pub-night,,TEXT_INPUT,Which element has atomic number 1?,,,,,Hydrogen,,20,
