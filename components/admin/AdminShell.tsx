@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/client/api";
 import { Logo } from "@/components/ui";
+import { APP_VERSION } from "@/lib/version";
 
 export function AdminShell({ children, title, actions }: { children: React.ReactNode; title?: React.ReactNode; actions?: React.ReactNode }) {
   const router = useRouter();
@@ -31,6 +32,7 @@ export function AdminShell({ children, title, actions }: { children: React.React
           </div>
         ) : null}
         {children}
+        <p className="mt-12 text-xs text-muted/60 tabular">Version {APP_VERSION}</p>
       </div>
     </div>
   );

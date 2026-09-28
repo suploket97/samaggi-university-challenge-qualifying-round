@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/client/api";
 import { Button, ErrorNote, Field, Logo, Spinner, inputClass } from "@/components/ui";
+import { APP_VERSION } from "@/lib/version";
 
 type Mode = "unset" | "stored" | "env";
 
@@ -37,6 +38,7 @@ export function AdminLogin() {
       <main className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center px-5">
         <Logo className="text-2xl" />
         <h1 className="mt-8 font-headline text-4xl text-bad">Setup isn&apos;t finished</h1>
+        <p className="mt-1 text-xs text-muted/70 tabular">Version {APP_VERSION}</p>
         <p className="mt-4 leading-relaxed">{setupProblem.message}.</p>
         <ol className="mt-4 list-decimal space-y-1 pl-5 text-sm text-muted">
           <li>In Vercel, open <b className="text-white">this</b> project (each Vercel Drop upload creates a new project).</li>
@@ -124,6 +126,7 @@ export function AdminLogin() {
           ) : null}
         </form>
       )}
+      <p className="mt-10 text-xs text-muted/70 tabular">Version {APP_VERSION}</p>
     </main>
   );
 }
