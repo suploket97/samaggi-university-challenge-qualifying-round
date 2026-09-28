@@ -184,3 +184,38 @@ Local development: `npm install`, copy `.env.example` to `.env.local` and fill i
   once, at reveal, and saved together with the state change in a single compare-and-set write.
 - The server stores each question's start and end times, and each screen runs its own countdown. When the timer hits 0, any screen may call `/tick`;
   the server ignores the call until its own clock agrees.
+
+---
+
+## Competition log and exports
+
+**Every game is recorded automatically** (admin → **Competition log**). Nothing to switch on. The log is saved in the question
+database (Supabase) as the game runs, a question at a time, so it survives even if the game is cut short or the room is deleted.
+Each record keeps:
+
+- every question exactly as it was asked (later edits to the pack don't change it)
+- each team's answer exactly as typed, the server time it arrived, and **how it was marked** (exact match, accepted with a typo,
+  no match), points and speed bonus
+- anti-cheat events (left the screen, paste attempts) and host actions (time added/removed, answers locked early)
+- standings after each reveal, the qualification cut and how ties were broken
+
+Records also show the **order answers arrived** for each question ("3rd of 11", using the server's clock) and the **first team to
+answer correctly**. Order doesn't change scores: the speed bonus and tie-breaks use time taken, not position.
+
+Records are read-only and stay until you delete them. Open one to see **Standings**, **Teams' answers** (search a team to settle
+a challenge on the spot), **Questions** (how many got each one right, common wrong answers) and **Timeline**.
+
+Downloads and printouts (use the browser's *Save as PDF* for a PDF; Thai prints correctly):
+- **Qualified list**: one page to hand to the afternoon organisers, with signature lines
+- **Full report**: standings, question summary, anti-cheat and host actions
+- **One team's answer sheet**: from the Teams' answers tab
+- **Excel** (tabs: Standings, Answers, Questions, Timeline) and **CSV** (every answer)
+
+Each report shows a **check code**. Export the same record again later: the same code means nothing in it has changed.
+
+**Question packs** (Question bank → open a pack → *Export*): CSV or Excel in the same columns as Import, so you can edit a pack
+in a spreadsheet and import it back; question ids are kept, so re-importing updates questions instead of duplicating them.
+Also a printable **question sheet**, with answers for the host and judges, or questions only as a paper backup.
+
+**Keeping Supabase awake:** free Supabase projects pause after a week without use. The app includes a daily Vercel cron job
+(`vercel.json` → `/api/cron/keepalive`) that makes one tiny read each day, so the question bank is ready on the day of the event.

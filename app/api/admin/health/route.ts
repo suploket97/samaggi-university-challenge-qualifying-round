@@ -41,12 +41,19 @@ async function tablesReady(): Promise<string | null> {
   if (a.error) return a.error.message;
   const b = await db.from("questions").select("question_id").limit(1);
   if (b.error) return b.error.message;
+  // Competition log (added later): existing databases get these tables created automatically.
+  const c = await db.from("competitions").select("competition_id").limit(1);
+  if (c.error) return c.error.message;
+  const d = await db.from("competition_questions").select("competition_id").limit(1);
+  if (d.error) return d.error.message;
+  const e = await db.from("competition_events").select("event_id").limit(1);
+  if (e.error) return e.error.message;
   return null;
 }
 
 /** Checks the question-bank tables and creates them if they're missing. */
 async function checkQuestionBank(): Promise<{ name: string; ok: boolean; detail?: string }> {
-  const name = "Database (question bank)";
+  const name = "Database (question bank and competition log)";
   try {
     let problem = await tablesReady();
     if (problem && TABLE_MISSING.test(problem)) {

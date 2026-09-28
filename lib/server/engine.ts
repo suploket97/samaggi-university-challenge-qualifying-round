@@ -4,6 +4,7 @@ import { RedisRoomStore } from "@/lib/game/store";
 import { getRedis } from "./redis";
 import { SupabaseBankRepo } from "./bank-repo";
 import { SupabaseBroadcastPublisher } from "./publisher";
+import { SupabaseRecorder } from "./recorder";
 
 let engine: GameEngine | null = null;
 
@@ -14,6 +15,7 @@ export function getEngine(): GameEngine {
       new SupabaseBankRepo(),
       new SupabaseBroadcastPublisher(),
     );
+    engine.recorder = new SupabaseRecorder();
   }
   return engine;
 }

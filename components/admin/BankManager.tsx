@@ -9,6 +9,8 @@ import { choiceTileStyle } from "@/components/game";
 import { AdminShell } from "./AdminShell";
 import { GRIP, arrayMove, useSortable } from "@/lib/client/useSortable";
 import { QuestionEditor, TIME_PRESETS } from "./QuestionEditor";
+import { questionsToRows } from "@/lib/bank/export";
+import { downloadCsv, downloadXlsx, fileSlug } from "@/lib/client/download";
 
 interface PackItem {
   quiz_pack_id: string;
@@ -214,6 +216,7 @@ function PackEditor({ pack, onChanged }: { pack: PackItem; onChanged: () => void
         <p className="mt-2 text-xs text-muted tabular">
           {questions?.length ?? 0} questions · about {Math.round(totalSec / 60)} min of answering time. Questions without their own time use the default. Drag ⠿ to reorder questions.
         </p>
+        <PackExport pack={pack} questions={questions} />
         {msg ? <p className="mt-2 text-sm text-good">✔ {msg}</p> : null}
         {err ? <div className="mt-2"><ErrorNote>{err}</ErrorNote></div> : null}
       </Card>
@@ -440,3 +443,55 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
   );
 }
 
+
+// ---------------------------------------------------------------------------
+// Export: spreadsheet (imports back unchanged) and printable question sheets
+// ---------------------------------------------------------------------------
+
+function PackExport({ pack, questions }: { pack: PackItem; questions: BankQuestion[] | null }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const ready = !!questions && questions.length > 0;
+  const name = fileSlug(pack.title);
+  const sheet = () => questionsToRows(pack, questions ?? []);
+  const printHref = (answers: boolean) => `/admin/bank/print?pack=${encodeURIComponent(pack.quiz_pack_id)}${answers ? "&answers=1" : ""}`;
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-sm">
+      <span className="mr-1 text-xs text-muted">Export</span>
+      <Button size="sm" variant="ghost" disabled={!ready} onClick={() => { const { columns, rows } = sheet(); downloadCsv(`${name}.csv`, rows, columns); }}>
+        ⬇ CSV
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={!ready}
+        loading={busy}
+        onClick={async () => {
+          setBusy(true);
+          setErr(null);
+          try {
+            const { columns, rows } = sheet();
+            await downloadXlsx(`${name}.xlsx`, [{ name: "Questions", rows, columns, widths: columns.map((c) => (c === "question_text" || c === "explanation" ? 60 : c.startsWith("sub_") && c.endsWith("question") ? 40 : 18)) }]);
+          } catch (e) {
+            setErr((e as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        ⬇ Excel
+      </Button>
+      <a href={printHref(true)} target="_blank" rel="noreferrer" className={cx("rounded-lg px-3 py-1.5 text-muted hover:text-white", !ready && "pointer-events-none opacity-40")}>
+        🖨 Question sheet with answers
+      </a>
+      <a href={printHref(false)} target="_blank" rel="noreferrer" className={cx("rounded-lg px-3 py-1.5 text-muted hover:text-white", !ready && "pointer-events-none opacity-40")}>
+        🖨 Questions only
+      </a>
+      <span className="w-full text-xs text-muted">
+        The CSV/Excel file uses the same columns as Import, so you can edit it and import it back (same question ids update in place). Pictures stay as links.
+      </span>
+      {err ? <ErrorNote>{err}</ErrorNote> : null}
+    </div>
+  );
+}

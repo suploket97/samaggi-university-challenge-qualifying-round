@@ -74,31 +74,56 @@ export function allowedTypos(normalizedAlias: string, maxTypos: number): number 
   return Math.min(2, maxTypos);
 }
 
-export function matchTextAnswer(raw: string, q: BankQuestion): boolean {
+/**
+ * Why a typed answer was (or wasn't) accepted. Kept for the competition log,
+ * so a disputed answer can be explained exactly.
+ *   EXACT      typed exactly as an accepted answer
+ *   NORMALISED same after ignoring capitals, accents, punctuation, spaces or a leading "the/a/an"
+ *   TYPO       within the allowed number of typos (typos = edit distance)
+ *   NONE       no accepted answer matched
+ *   BLANK      nothing (usable) was typed
+ */
+export interface TextMatch {
+  kind: "EXACT" | "NORMALISED" | "TYPO" | "NONE" | "BLANK";
+  matched?: string;
+  typos?: number;
+}
+
+export function explainTextMatch(raw: string, q: Pick<BankQuestion, "correct_answers_array" | "text_matching">): TextMatch {
   const opts = q.text_matching ?? {};
   const ignoreArticles = opts.ignore_articles ?? true;
   const fuzzy = opts.fuzzy ?? true;
   const maxTypos = opts.max_typos ?? 2;
 
   const given = normalizeAnswer(raw, ignoreArticles);
-  if (!given) return false;
+  if (!given) return { kind: "BLANK" };
 
+  // Prefer the closest explanation: exact, then normalised, then typo.
+  for (const alias of q.correct_answers_array) {
+    if (raw.trim() === alias.trim()) return { kind: "EXACT", matched: alias };
+  }
   for (const alias of q.correct_answers_array) {
     const target = normalizeAnswer(alias, ignoreArticles);
-    if (given === target) return true;
     // Also compare with spaces removed: "new york" vs "newyork".
-    if (given.replace(/ /g, "") === target.replace(/ /g, "")) return true;
-    if (fuzzy) {
+    if (given === target || given.replace(/ /g, "") === target.replace(/ /g, "")) return { kind: "NORMALISED", matched: alias };
+  }
+  if (fuzzy) {
+    for (const alias of q.correct_answers_array) {
+      const target = normalizeAnswer(alias, ignoreArticles);
       const k = allowedTypos(target, maxTypos);
-      if (k > 0 && levenshtein(given, target, k) <= k) return true;
+      if (k > 0) {
+        const d = levenshtein(given, target, k);
+        if (d <= k) return { kind: "TYPO", matched: alias, typos: d };
+      }
     }
   }
-  return false;
+  return { kind: "NONE" };
 }
 
-// ---------------------------------------------------------------------------
-// Per-submission scoring
-// ---------------------------------------------------------------------------
+export function matchTextAnswer(raw: string, q: BankQuestion): boolean {
+  const k = explainTextMatch(raw, q).kind;
+  return k === "EXACT" || k === "NORMALISED" || k === "TYPO";
+}
 
 export function speedBonus(elapsedMs: number, tiers: SpeedTier[]): number {
   const sorted = [...tiers].sort((a, b) => a.within_sec - b.within_sec);

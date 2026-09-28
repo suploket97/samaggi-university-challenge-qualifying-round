@@ -6,8 +6,11 @@
  *   quiz_pack_id | pack_title | pack_description | question_id | type |
  *   question_text | choice_a … choice_z | correct_answers | media_url |
  *   sub_1_question | sub_1_answers | sub_1_points … sub_20_* (SUB_QUESTIONS_TEXT) |
- *   media_type | time_limit_sec | base_points | multi_scoring | fuzzy |
- *   max_typos | explanation | order
+ *   choice_a_image … choice_z_image (picture choices) | show_on_phones |
+ *   pack_time_limit_sec | media_type | time_limit_sec | base_points |
+ *   multi_scoring | fuzzy | max_typos | explanation | order
+ *
+ * lib/bank/export.ts writes these same columns, so an exported pack imports back unchanged.
  */
 import { CHOICE_LETTERS, MAX_SUB_QUESTIONS, type BankQuestion, type Choice, type ChoiceId, type QuestionType, type SubQuestion } from "@/lib/game/types";
 import type { ImportDoc, ImportPack } from "./types";
@@ -64,6 +67,11 @@ const HEADER_ALIASES: Record<string, string> = {
   fun_fact: "explanation",
   order: "order",
   position: "order",
+  show_on_phones: "show_on_phones",
+  show_media_on_player: "show_on_phones",
+  pack_time_limit_sec: "pack_time_limit_sec",
+  pack_time: "pack_time_limit_sec",
+  default_time_limit_sec: "pack_time_limit_sec",
 };
 
 function headerKey(h: string): string | null {
@@ -74,6 +82,9 @@ function headerKey(h: string): string | null {
     const kind = !sq[2] || ["question", "prompt", "q"].includes(sq[2]) ? "question" : sq[2].startsWith("p") ? "points" : "answers";
     return `sub_${Number(sq[1])}_${kind}`;
   }
+  // Picture for a choice: choice_a_image, option_b_picture, ...
+  const pic = k.match(/^(?:choice|option|opt)_?([a-z])_?(?:image|img|picture|pic|media|media_url)$/);
+  if (pic) return `choice_${pic[1]}_media`;
   const m = k.match(/^(?:choice|option|opt|answer_option)_?([a-z])$/);
   if (m) return `choice_${m[1]}`;
   if (/^[a-z]$/.test(k)) return `choice_${k}`;
@@ -97,6 +108,12 @@ function bool(v: unknown): boolean | undefined {
   if (["true", "yes", "y", "1"].includes(s)) return true;
   if (["false", "no", "n", "0"].includes(s)) return false;
   return undefined;
+}
+
+/** Ids the database accepts as they are (see supabase/setup.sql). Kept unchanged so re-imports update in place. */
+const VALID_ID = /^[a-z0-9][a-z0-9_-]{2,63}$/;
+function keepOrSlug(s: string): string {
+  return VALID_ID.test(s) ? s : slugify(s);
 }
 
 export function slugify(s: string): string {
@@ -167,17 +184,19 @@ export function rowsToImport(rows: Row[]): RowsResult {
 
     // Pack: explicit id, else slug of title, else carry over from the row above.
     const packTitle = str(r.pack_title);
-    let packId = str(r.quiz_pack_id) ? slugify(str(r.quiz_pack_id)) : packTitle ? slugify(packTitle) : lastPackId;
+    let packId = str(r.quiz_pack_id) ? keepOrSlug(str(r.quiz_pack_id)) : packTitle ? slugify(packTitle) : lastPackId;
     if (!packId) {
       problems.push({ row: rowNo, message: "no quiz pack — fill in quiz_pack_id or pack_title" });
       return;
     }
     lastPackId = packId;
     if (!packs.has(packId)) {
+      const packTime = num(r.pack_time_limit_sec);
       packs.set(packId, {
         quiz_pack_id: packId,
         title: packTitle || str(r.quiz_pack_id) || packId,
         ...(str(r.pack_description) ? { description: str(r.pack_description) } : {}),
+        ...(packTime !== undefined ? { default_time_limit_sec: Math.round(packTime) } : {}),
       });
     } else if (packTitle && packs.get(packId)!.title === packId) {
       packs.get(packId)!.title = packTitle;
@@ -187,7 +206,8 @@ export function rowsToImport(rows: Row[]): RowsResult {
     const choices: Choice[] = [];
     for (const L of LETTERS) {
       const v = str(r[`choice_${L.toLowerCase()}`]);
-      if (v) choices.push({ choice_id: L, text: v });
+      const media = str(r[`choice_${L.toLowerCase()}_media`]);
+      if (v || media) choices.push({ choice_id: L, text: v, ...(media ? { media_url: media } : {}) });
     }
 
     // Correct answers
@@ -226,7 +246,7 @@ export function rowsToImport(rows: Row[]): RowsResult {
     }
     if (type === "SUB_QUESTIONS_TEXT") correct = [];
 
-    let qid = str(r.question_id) ? slugify(str(r.question_id)) : `${packId.slice(0, 40)}-${shortHash(text)}`;
+    let qid = str(r.question_id) ? keepOrSlug(str(r.question_id)) : `${packId.slice(0, 40)}-${shortHash(text)}`;
     if (usedIds.has(qid) && !str(r.question_id)) qid = `${qid}-${rowNo}`;
     usedIds.add(qid);
 
@@ -245,6 +265,8 @@ export function rowsToImport(rows: Row[]): RowsResult {
       q.media_url = media;
       const mt = str(r.media_type).toLowerCase() || inferMediaType(media);
       if (mt) q.media_type = mt as "image" | "audio" | "video";
+      const phones = bool(r.show_on_phones);
+      if (phones !== undefined) q.show_media_on_player = phones;
     }
     const time = num(r.time_limit_sec);
     if (time !== undefined) q.time_limit_sec = Math.round(time);

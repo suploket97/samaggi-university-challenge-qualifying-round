@@ -128,3 +128,40 @@ body {
 
 /* FitText measures real sizes: entrance animations would look like overflow. */
 [data-measuring] *, [data-measuring] { animation: none !important; transition: none !important; }
+
+/* ---------- Printable reports (competition log, question sheets) ----------
+   Plain CSS on purpose: a white page that prints cleanly, whatever the app theme. */
+.paper-page { min-height: 100dvh; background: #fff; color: #111; }
+.paper { max-width: 960px; margin: 0 auto; padding: 32px 28px 48px; font-family: var(--font-sans); font-size: 13px; line-height: 1.45; color: #111; }
+.paper h1 { font-family: var(--font-headline); font-size: 34px; letter-spacing: .03em; line-height: 1.05; margin: 0; }
+.paper h2 { font-family: var(--font-headline); font-size: 22px; letter-spacing: .03em; margin: 28px 0 8px; border-bottom: 2px solid #111; padding-bottom: 3px; }
+.paper h3 { font-size: 14px; font-weight: 700; margin: 16px 0 4px; }
+.paper .meta { display: flex; flex-wrap: wrap; gap: 4px 22px; color: #444; margin-top: 6px; }
+.paper .muted { color: #555; }
+.paper .small { font-size: 11px; }
+.paper .q-text { font-family: var(--font-display); white-space: pre-line; overflow-wrap: anywhere; }
+.paper table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.paper th, .paper td { border-bottom: 1px solid #d4d4d8; padding: 5px 6px; text-align: left; vertical-align: top; }
+.paper th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #555; border-bottom: 1.5px solid #111; }
+.paper td.num, .paper th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.paper tr.cut td { border-bottom: 2.5px solid #111; }
+.paper .ok { color: #047857; font-weight: 600; }
+.paper .bad { color: #be123c; font-weight: 600; }
+.paper .code { font-family: var(--font-mono); letter-spacing: .08em; }
+.paper .sign { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 36px; }
+.paper .sign div { border-top: 1px solid #111; padding-top: 4px; font-size: 11px; color: #444; }
+.paper .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 20px; padding: 10px 12px; border: 1px solid #d4d4d8; border-radius: 10px; background: #f4f4f5; }
+.paper .toolbar button, .paper .toolbar a { font: inherit; font-weight: 600; padding: 6px 12px; border-radius: 8px; border: 1px solid #a1a1aa; background: #fff; color: #111; cursor: pointer; text-decoration: none; }
+.paper .toolbar button.primary { background: #111; color: #fff; border-color: #111; }
+.paper .qblock { break-inside: avoid; border-bottom: 1px solid #e4e4e7; padding: 10px 0; }
+.paper .qblock img { max-height: 140px; max-width: 260px; margin-top: 6px; border: 1px solid #e4e4e7; }
+.paper .ans { margin-top: 4px; color: #047857; }
+.paper .blank { display: inline-block; min-width: 220px; border-bottom: 1px solid #999; height: 1.2em; }
+@media print {
+  @page { size: A4; margin: 14mm 12mm; }
+  html, body { background: #fff !important; background-image: none !important; }
+  .no-print { display: none !important; }
+  .paper { max-width: none; padding: 0; }
+  .paper tr, .paper .keep { break-inside: avoid; }
+  .paper .page-break { break-before: page; }
+}

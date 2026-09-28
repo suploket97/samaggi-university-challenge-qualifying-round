@@ -44,6 +44,59 @@ alter table public.questions drop constraint if exists questions_type_check;
 alter table public.questions add constraint questions_type_check
   check (type in ('MCQ_SINGLE', 'MCQ_MULTI', 'TEXT_INPUT', 'SUB_QUESTIONS_TEXT'));
 
+-- Competition log: a permanent record of every game, for settling disputes.
+-- Written by the server as the game runs; read-only in the app.
+create table if not exists public.competitions (
+  competition_id    text primary key,
+  room_code         text not null,
+  pack_id           text,
+  pack_title        text,
+  status            text not null default 'LIVE' check (status in ('LIVE', 'FINISHED')),
+  created_at        timestamptz not null,
+  updated_at        timestamptz not null default now(),
+  finished_at       timestamptz,
+  question_total    integer not null default 0,
+  questions_played  integer not null default 0,
+  settings          jsonb,
+  teams             jsonb not null default '[]',   -- [{team_id, name, joined_at, flags}]
+  standings         jsonb not null default '[]',   -- leaderboard after the latest reveal
+  qualification     jsonb
+);
+
+create table if not exists public.competition_questions (
+  competition_id  text not null references public.competitions (competition_id) on delete cascade,
+  question_index  integer not null,
+  question        jsonb not null,  -- the question exactly as it was asked, with its answers
+  effective       jsonb not null,  -- time limit, points and speed bonus actually used
+  started_at      timestamptz,
+  planned_end_at  timestamptz,
+  closed_at       timestamptz,
+  closed_by       text,            -- HOST (locked early) or TIMER
+  revealed_at     timestamptz,
+  results         jsonb,           -- every team's answer, how it was marked, points
+  stats           jsonb,
+  primary key (competition_id, question_index)
+);
+
+create table if not exists public.competition_events (
+  event_id        bigint generated always as identity primary key,
+  competition_id  text not null references public.competitions (competition_id) on delete cascade,
+  at              timestamptz not null,
+  kind            text not null,
+  question_index  integer,
+  detail          jsonb
+);
+
+create index if not exists competitions_created_idx on public.competitions (created_at desc);
+create index if not exists competition_events_idx on public.competition_events (competition_id, event_id);
+
+alter table public.competitions          enable row level security;
+alter table public.competition_questions enable row level security;
+alter table public.competition_events    enable row level security;
+revoke all on public.competitions          from anon, authenticated;
+revoke all on public.competition_questions from anon, authenticated;
+revoke all on public.competition_events    from anon, authenticated;
+
 -- Storage for question pictures, audio and video. Files are public so the
 -- stage and phones can load them; only the server can create upload links.
 -- (Wrapped so a storage permission problem never blocks the tables above;

@@ -39,6 +39,7 @@ import type { ResolvedEvent } from "./state-machine";
 import { rankTeams, scoreSubmission, subQuestionPoints } from "./scoring";
 import type { Tally } from "./scoring";
 import type { RoomStore } from "./store";
+import { explainAnswer, noopRecorder, type AnswerRecord, type GameRecorder, type RecordInput } from "./recorder";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -89,7 +90,13 @@ export type AnswerResult =
 const MAX_CAS_RETRIES = 3;
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L
 
+/** Extra data gathered while resolving a command, passed on to the recorder. */
+type ResolveContext = Pick<RecordInput, "question" | "pack" | "answers" | "teams">;
+
 export class GameEngine {
+  /** Keeps the permanent competition log. Set by the server; tests may replace it. */
+  recorder: GameRecorder = noopRecorder;
+
   constructor(
     private store: RoomStore,
     private bank: QuestionBankRepo,
@@ -129,7 +136,7 @@ export class GameEngine {
       const state = await this.getState(code);
       assertCanApply(state, cmd.type); // fail fast before any expensive resolving
       const now = this.clock.now();
-      const event = await this.resolve(state, cmd);
+      const { event, ctx } = await this.resolve(state, cmd);
       const next = transition(state, event, now);
       if (await this.store.compareAndSetState(code, state.version, next)) {
         try {
@@ -138,12 +145,22 @@ export class GameEngine {
           // The write succeeded; clients will catch up on their next poll.
           console.error("realtime publish failed", e);
         }
+        await this.recordSafely(() => this.recorder.onTransition({ command: cmd, prev: state, next, at: now, ...ctx }));
         return next;
       }
       // Someone else moved the room on. Re-read and re-validate: the command
       // may no longer be legal (e.g. both admin tabs clicked REVEAL).
     }
     throw new GameError("VERSION_CONFLICT", "Room changed concurrently, try again");
+  }
+
+  /** The log must never stop the game: failures are reported and the game carries on. */
+  private async recordSafely(fn: () => Promise<void>) {
+    try {
+      await fn();
+    } catch (e) {
+      console.error("competition log: could not record", e);
+    }
   }
 
   /** Idempotent: closes the question if (and only if) its time is up. */
@@ -161,13 +178,16 @@ export class GameEngine {
     }
   }
 
-  private async resolve(state: RoomState, cmd: AdminCommand | { type: "TIMER_EXPIRED" }): Promise<ResolvedEvent> {
+  private async resolve(
+    state: RoomState,
+    cmd: AdminCommand | { type: "TIMER_EXPIRED" },
+  ): Promise<{ event: ResolvedEvent; ctx: ResolveContext }> {
     switch (cmd.type) {
       case "SELECT_PACK": {
         const pack = await this.bank.getPack(cmd.quiz_pack_id);
         if (!pack) throw new GameError("BAD_REQUEST", `Unknown pack ${cmd.quiz_pack_id}`);
         const question_ids = await this.bank.getPackQuestionIds(cmd.quiz_pack_id);
-        return { type: "SELECT_PACK", quiz_pack_id: cmd.quiz_pack_id, question_ids };
+        return { event: { type: "SELECT_PACK", quiz_pack_id: cmd.quiz_pack_id, question_ids }, ctx: { pack } };
       }
       case "START_QUESTION": {
         const index = state.current_question_index + 1;
@@ -182,25 +202,28 @@ export class GameEngine {
           if (!Number.isFinite(t) || t < 5 || t > 600) throw new GameError("BAD_REQUEST", "Time must be between 5 and 600 seconds");
           question.time_limit_sec = t;
         }
-        return { type: "START_QUESTION", question };
+        return { event: { type: "START_QUESTION", question }, ctx: { question: q, pack } };
       }
       case "REVEAL_ANSWER": {
-        const { reveal, leaderboard } = await this.scoreCurrentQuestion(state);
-        return { type: "REVEAL_ANSWER", reveal, leaderboard };
+        const { reveal, leaderboard, question, pack, answers, teams } = await this.scoreCurrentQuestion(state);
+        return { event: { type: "REVEAL_ANSWER", reveal, leaderboard }, ctx: { question, pack, answers, teams } };
       }
       case "SHOW_QUALIFICATION": {
-        return { type: "SHOW_QUALIFICATION", qualification: await this.qualify(state, cmd.qualify_count) };
+        const { qualification, teams } = await this.qualify(state, cmd.qualify_count);
+        return { event: { type: "SHOW_QUALIFICATION", qualification }, ctx: { teams } };
       }
       case "ADJUST_TIME": {
         const d = Math.round(Number(cmd.delta_sec));
         if (!Number.isFinite(d) || d === 0 || Math.abs(d) > 300) throw new GameError("BAD_REQUEST", "Time change must be between -300 and 300 seconds");
-        return { type: "ADJUST_TIME", delta_sec: d };
+        return { event: { type: "ADJUST_TIME", delta_sec: d }, ctx: {} };
       }
+      case "TERMINATE":
+        // Final team list (with anti-cheat flags) for the log.
+        return { event: { type: "TERMINATE" }, ctx: { teams: await this.store.getTeams(state.room_code) } };
       case "END_QUESTION":
       case "TIMER_EXPIRED":
       case "SHOW_LEADERBOARD":
-      case "TERMINATE":
-        return { type: cmd.type };
+        return { event: { type: cmd.type }, ctx: {} };
     }
   }
 
@@ -209,7 +232,14 @@ export class GameEngine {
    * inside the REVEAL transition, so the running scoreboard is updated in the
    * same versioned write as the phase change.
    */
-  private async scoreCurrentQuestion(state: RoomState): Promise<{ reveal: RevealPayload; leaderboard: ScoreRow[] }> {
+  private async scoreCurrentQuestion(state: RoomState): Promise<{
+    reveal: RevealPayload;
+    leaderboard: ScoreRow[];
+    question: BankQuestion;
+    pack: PackInfo;
+    answers: AnswerRecord[];
+    teams: Team[];
+  }> {
     const qIndex = state.current_question_index;
     const [q, pack, teams, subs] = await Promise.all([
       this.bank.getQuestion(state.question_ids[qIndex]),
@@ -232,6 +262,8 @@ export class GameEngine {
     const results: RevealPayload["results"] = {};
     const distribution: Record<string, number> | null = q.type === "TEXT_INPUT" || q.type === "SUB_QUESTIONS_TEXT" ? null : {};
     for (const c of q.choices ?? []) distribution![c.choice_id] = 0;
+    const basePoints = q.base_points ?? pack.default_base_points;
+    const answers: AnswerRecord[] = [];
 
     for (const team of teams) {
       const sub = byTeam.get(team.team_id);
@@ -255,6 +287,23 @@ export class GameEngine {
         t.total_correct_time_ms += r.elapsed_ms ?? 0;
       }
       if (distribution && sub) for (const c of sub.answer) distribution[c] = (distribution[c] ?? 0) + 1;
+      answers.push({
+        team_id: team.team_id,
+        team_name: team.name,
+        answered: !!sub,
+        answer: sub ? sub.answer : null,
+        received_at: sub ? sub.received_at : null,
+        elapsed_ms: r.elapsed_ms,
+        correct: r.correct,
+        fraction: r.fraction,
+        base_points: r.base_points,
+        speed_bonus: r.speed_bonus,
+        points: r.points,
+        // Locked out by anti-cheat for this question (whether or not an answer had arrived).
+        voided,
+        marking: sub ? explainAnswer(q, sub.answer, basePoints) : null,
+        flags: team.flags.filter((f) => f.question_index === qIndex),
+      });
     }
 
     const isText = q.type === "TEXT_INPUT";
@@ -283,10 +332,14 @@ export class GameEngine {
         answer_distribution: distribution,
       },
       leaderboard: rankTeams(teams, tallies, state.leaderboard),
+      question: q,
+      pack,
+      answers,
+      teams,
     };
   }
 
-  private async qualify(state: RoomState, qualifyCount: number): Promise<QualificationPayload> {
+  private async qualify(state: RoomState, qualifyCount: number): Promise<{ qualification: QualificationPayload; teams: Team[] }> {
     if (!Number.isInteger(qualifyCount) || qualifyCount < 1) {
       throw new GameError("BAD_REQUEST", "qualify_count must be a positive integer");
     }
@@ -299,9 +352,12 @@ export class GameEngine {
     // Rank-based cut: a team tied with the last qualifying rank also qualifies.
     const cutoffRank = standings[Math.min(qualifyCount, standings.length) - 1]?.rank ?? 0;
     return {
-      qualify_count: qualifyCount,
-      qualified_team_ids: standings.filter((r) => r.rank <= cutoffRank).map((r) => r.team_id),
-      final_standings: standings,
+      qualification: {
+        qualify_count: qualifyCount,
+        qualified_team_ids: standings.filter((r) => r.rank <= cutoffRank).map((r) => r.team_id),
+        final_standings: standings,
+      },
+      teams,
     };
   }
 
@@ -451,7 +507,9 @@ export class GameEngine {
   }
 
   async deleteRoom(code: string) {
+    const state = await this.store.getState(code);
     await this.store.deleteRoom(code);
+    if (state) await this.recordSafely(() => this.recorder.onRoomDeleted(state, this.clock.now()));
   }
 
   async listRooms() {

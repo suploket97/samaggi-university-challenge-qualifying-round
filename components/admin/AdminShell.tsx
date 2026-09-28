@@ -8,10 +8,11 @@ export function AdminShell({ children, title, actions }: { children: React.React
   const router = useRouter();
   return (
     <div className="min-h-dvh">
-      <nav className="flex items-center gap-6 border-b border-line/70 px-5 py-3">
+      <nav className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-line/70 px-5 py-3">
         <Link href="/admin"><Logo className="text-lg" /></Link>
-        <Link href="/admin" className="text-sm text-muted hover:text-white">Rooms</Link>
-        <Link href="/admin/bank" className="text-sm text-muted hover:text-white">Question bank</Link>
+        <Link href="/admin" className="whitespace-nowrap text-sm text-muted hover:text-white">Rooms</Link>
+        <Link href="/admin/bank" className="whitespace-nowrap text-sm text-muted hover:text-white">Question bank</Link>
+        <Link href="/admin/competitions" className="whitespace-nowrap text-sm text-muted hover:text-white">Competition log</Link>
         <button
           className="ml-auto text-sm text-muted hover:text-white"
           onClick={async () => {
