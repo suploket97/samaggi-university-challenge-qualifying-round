@@ -4,7 +4,7 @@
  * and imported back; question ids are kept, so re-importing updates rather
  * than duplicates.
  */
-import { CHOICE_LETTERS, MAX_SUB_QUESTIONS, type BankQuestion } from "@/lib/game/types";
+import { CHOICE_LETTERS, MAX_SEQUENCE_ITEMS, MAX_SUB_QUESTIONS, type BankQuestion } from "@/lib/game/types";
 
 export interface ExportPack {
   quiz_pack_id: string;
@@ -28,6 +28,7 @@ export function packsToRows(list: { pack: ExportPack; questions: BankQuestion[] 
   const maxChoices = Math.max(0, ...questions.map((q) => q.choices?.length ?? 0));
   const choicePics = questions.some((q) => q.choices?.some((c) => c.media_url));
   const maxParts = Math.min(MAX_SUB_QUESTIONS, Math.max(0, ...questions.map((q) => q.sub_questions?.length ?? 0)));
+  const maxPairs = Math.min(MAX_SEQUENCE_ITEMS, Math.max(0, ...questions.map((q) => (q.type === "MATCHING" ? q.pairs?.length ?? 0 : 0))));
 
   const columns = [
     "quiz_pack_id", "pack_title", "pack_description", "pack_time_limit_sec",
@@ -35,6 +36,7 @@ export function packsToRows(list: { pack: ExportPack; questions: BankQuestion[] 
     ...CHOICE_LETTERS.slice(0, maxChoices).map((L) => `choice_${L.toLowerCase()}`),
     ...(choicePics ? CHOICE_LETTERS.slice(0, maxChoices).map((L) => `choice_${L.toLowerCase()}_image`) : []),
     ...Array.from({ length: maxParts }, (_, i) => [`sub_${i + 1}_question`, `sub_${i + 1}_answers`, `sub_${i + 1}_points`]).flat(),
+    ...Array.from({ length: maxPairs }, (_, i) => [`match_${i + 1}_left`, `match_${i + 1}_right`]).flat(),
     "media_url", "media_type", "show_on_phones", "time_limit_sec", "base_points", "multi_scoring", "fuzzy", "max_typos", "explanation",
   ];
 
@@ -51,7 +53,8 @@ export function packsToRows(list: { pack: ExportPack; questions: BankQuestion[] 
     r.question_id = q.question_id;
     r.type = q.type;
     r.question_text = q.question_text;
-    r.correct_answers = q.type === "SUB_QUESTIONS_TEXT" ? "" : q.correct_answers_array.join(" | ");
+    // Sub-questions keep answers on each part; ordering is the choice order itself; matching is the pairs.
+    r.correct_answers = q.type === "SUB_QUESTIONS_TEXT" || q.type === "ORDERING" || q.type === "MATCHING" ? "" : q.correct_answers_array.join(" | ");
     (q.choices ?? []).forEach((c, j) => {
       const L = CHOICE_LETTERS[j].toLowerCase();
       r[`choice_${L}`] = c.text;
@@ -62,12 +65,18 @@ export function packsToRows(list: { pack: ExportPack; questions: BankQuestion[] 
       r[`sub_${j + 1}_answers`] = sq.correct_answers_array.join(" | ");
       r[`sub_${j + 1}_points`] = sq.points ?? "";
     });
+    if (q.type === "MATCHING") {
+      (q.pairs ?? []).slice(0, maxPairs).forEach((p, j) => {
+        r[`match_${j + 1}_left`] = p.left;
+        r[`match_${j + 1}_right`] = p.right;
+      });
+    }
     r.media_url = q.media_url ?? "";
     r.media_type = q.media_url ? q.media_type ?? "" : "";
     r.show_on_phones = q.media_url && q.show_media_on_player !== undefined ? (q.show_media_on_player ? "yes" : "no") : "";
     r.time_limit_sec = q.time_limit_sec ?? "";
     r.base_points = q.base_points ?? "";
-    r.multi_scoring = q.type === "MCQ_MULTI" ? q.multi_scoring ?? "" : "";
+    r.multi_scoring = q.type === "MCQ_MULTI" || q.type === "ORDERING" || q.type === "MATCHING" ? q.multi_scoring ?? "" : "";
     r.fuzzy = q.text_matching?.fuzzy === undefined ? "" : q.text_matching.fuzzy ? "yes" : "no";
     r.max_typos = q.text_matching?.max_typos ?? "";
     r.explanation = q.explanation ?? "";

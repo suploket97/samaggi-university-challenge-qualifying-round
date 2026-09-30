@@ -4,6 +4,28 @@ import type { BankQuestion } from "@/lib/game/types";
 import type { ImportDoc } from "@/lib/bank/types";
 import { slugify } from "@/lib/bank/rows";
 import { getSupabaseAdmin } from "./supabase";
+import { ensureDatabaseTables } from "./db-setup";
+
+/**
+ * Saves question rows. Databases set up before a question type existed still
+ * have the old list of allowed types; the setup script updates it, so run it
+ * once and try again.
+ */
+async function upsertQuestions(rows: Record<string, unknown>[] | Record<string, unknown>) {
+  const db = getSupabaseAdmin();
+  let res = await db.from("questions").upsert(rows, { onConflict: "question_id" });
+  if (res.error && /questions_type_check/.test(res.error.message)) {
+    const setup = await ensureDatabaseTables();
+    if (!setup.ok) {
+      throw new Error(
+        "This database doesn't allow the new question types yet. Run supabase/setup.sql again in Supabase → SQL Editor (it is safe to re-run), then save again.",
+      );
+    }
+    await new Promise((r) => setTimeout(r, 500));
+    res = await db.from("questions").upsert(rows, { onConflict: "question_id" });
+  }
+  return res;
+}
 
 interface PackRow {
   quiz_pack_id: string;
@@ -201,10 +223,14 @@ export class SupabaseBankRepo implements QuestionBankRepo {
     }
     const { order: _order, ...clean } = q;
     void _order;
-    const { error } = await db.from("questions").upsert(
-      { question_id: q.question_id, quiz_pack_id: q.quiz_pack_id, position, type: q.type, data: clean, updated_at: new Date().toISOString() },
-      { onConflict: "question_id" },
-    );
+    const { error } = await upsertQuestions({
+      question_id: q.question_id,
+      quiz_pack_id: q.quiz_pack_id,
+      position,
+      type: q.type,
+      data: clean,
+      updated_at: new Date().toISOString(),
+    });
     if (error) dbError("Saving question", error);
     await db.from("quiz_packs").update({ updated_at: new Date().toISOString() }).eq("quiz_pack_id", q.quiz_pack_id);
     clearBankCache();
@@ -285,7 +311,7 @@ export class SupabaseBankRepo implements QuestionBankRepo {
         updated_at: now,
       }));
       for (let i = 0; i < rows.length; i += 500) {
-        const { error } = await db.from("questions").upsert(rows.slice(i, i + 500), { onConflict: "question_id" });
+        const { error } = await upsertQuestions(rows.slice(i, i + 500));
         if (error) dbError("Saving questions", error);
       }
       count += rows.length;

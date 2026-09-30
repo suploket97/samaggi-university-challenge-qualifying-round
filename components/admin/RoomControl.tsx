@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import type { PublicSnapshot } from "@/lib/game/engine";
-import type { AntiCheatFlag, AdminCommand, RoomSettings } from "@/lib/game/types";
+import { QUESTION_TYPE_LABEL, type AntiCheatFlag, type AdminCommand, type RoomSettings } from "@/lib/game/types";
 import { adminView } from "@/lib/game/projections";
 import { api, ApiError } from "@/lib/client/api";
 import { useAutoTick, useNow, usePoll, useRoom } from "@/lib/client/hooks";
@@ -22,6 +22,8 @@ interface AdminStatus {
     type: string;
     explanation: string | null;
     sub_questions: { sub_id: string; prompt: string; correct_answers_array: string[]; points?: number }[] | null;
+    /** Ordering / matching: the answer in words. */
+    sequence?: string[] | null;
   } | null;
   next_question: { index: number; question_text: string; type: string; time_limit_sec: number; media_url: string | null } | null;
   teams: {
@@ -31,6 +33,8 @@ interface AdminStatus {
     rank: number | null;
     answered: boolean;
     answer: string[] | null;
+    /** Ordering / matching: the answer in words. */
+    answer_text?: string | null;
     flags: AntiCheatFlag[];
     frozen_now: boolean;
   }[];
@@ -331,7 +335,7 @@ export function RoomControl({ code }: { code: string }) {
             <Card className="p-5">
               <div className="flex items-center justify-between">
                 <p className="text-sm text-muted">
-                  Q{q.index + 1} · {TYPE_LABEL[q.type] ?? q.type} · {q.time_limit_sec}s
+                  Q{q.index + 1} · {TYPE_LABEL[q.type] ?? q.type} · {q.time_limit_sec}s · {SCORING_SHORT[status?.settings.scoring_mode ?? "CLASSIC"]}
                 </p>
                 <p className="text-xs uppercase tracking-widest text-gold">Host view — answer visible</p>
               </div>
@@ -358,7 +362,19 @@ export function RoomControl({ code }: { code: string }) {
                 ) : null}
                 <p className="min-w-0 flex-1 font-display text-2xl font-semibold">{q.question_text}</p>
               </div>
-              {q.choices ? (
+              {q.type === "ORDERING" || q.type === "MATCHING" ? (
+                <div className="mt-3">
+                  <p className="text-sm text-muted">{q.type === "ORDERING" ? "Correct order (phones show the items shuffled):" : "Correct pairs (phones show the matches shuffled):"}</p>
+                  <ol className="mt-1.5 space-y-1">
+                    {(statusSameQ ? status?.current_answer?.sequence ?? [] : []).map((line, i) => (
+                      <li key={i} className="flex items-baseline gap-2 rounded-lg bg-good/10 px-3 py-1.5">
+                        <span className="text-muted tabular">{i + 1}.</span>
+                        <span className="font-semibold text-good">{line}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ) : q.choices ? (
                 <div className="mt-4 grid gap-2 sm:grid-cols-2">
                   {q.choices.map((c) => (
                     <div key={c.choice_id} style={choiceTileStyle(c.choice_id)} className={cx("flex items-center gap-3 rounded-xl border-2 p-3 text-white", !correct.has(c.choice_id) && "opacity-40")}>
@@ -400,6 +416,7 @@ export function RoomControl({ code }: { code: string }) {
                 <p className="text-muted">Players join at</p>
                 <p className="break-all font-display text-xl font-semibold">{joinUrl}</p>
                 <p className="mt-2 text-sm text-muted">Open the stage on the projector — it shows this code and QR too.</p>
+                <p className="mt-1 text-sm text-muted">Scoring: <b className="text-white">{SCORING_SHORT[status?.settings.scoring_mode ?? "CLASSIC"]}</b></p>
               </div>
             </Card>
           )}
@@ -444,7 +461,7 @@ export function RoomControl({ code }: { code: string }) {
                       t.frozen_now ? (
                         <span className="text-xs font-bold text-bad">VOIDED</span>
                       ) : t.answered ? (
-                        <span className="text-good" title={t.answer?.join(", ")}>✔</span>
+                        <span className="text-good" title={t.answer_text ?? t.answer?.join(", ")}>✔</span>
                       ) : (
                         <span className="text-muted">…</span>
                       )
@@ -461,11 +478,12 @@ export function RoomControl({ code }: { code: string }) {
   );
 }
 
-const TYPE_LABEL: Record<string, string> = {
-  MCQ_SINGLE: "One answer",
-  MCQ_MULTI: "Several answers",
-  TEXT_INPUT: "Typed answer",
-  SUB_QUESTIONS_TEXT: "Sub-questions",
+const TYPE_LABEL: Record<string, string> = QUESTION_TYPE_LABEL;
+
+const SCORING_SHORT: Record<string, string> = {
+  CLASSIC: "Classic scoring (speed bonus)",
+  ACCURACY: "Accuracy scoring (no speed bonus)",
+  DECAY: "Speed-decay scoring (100% → 50%)",
 };
 
 function phaseHeadline(p: PublicSnapshot["phase"]): string {

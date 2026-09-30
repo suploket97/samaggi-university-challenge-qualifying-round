@@ -11,7 +11,39 @@
 // Question Bank (mirrors schemas/question-bank.schema.json)
 // ---------------------------------------------------------------------------
 
-export type QuestionType = "MCQ_SINGLE" | "MCQ_MULTI" | "TEXT_INPUT" | "SUB_QUESTIONS_TEXT";
+export type QuestionType = "MCQ_SINGLE" | "MCQ_MULTI" | "TRUE_FALSE" | "TEXT_INPUT" | "SUB_QUESTIONS_TEXT" | "ORDERING" | "MATCHING";
+
+export const QUESTION_TYPES: QuestionType[] = ["MCQ_SINGLE", "MCQ_MULTI", "TRUE_FALSE", "TEXT_INPUT", "SUB_QUESTIONS_TEXT", "ORDERING", "MATCHING"];
+
+/** Short names for the host screens. */
+export const QUESTION_TYPE_LABEL: Record<QuestionType, string> = {
+  MCQ_SINGLE: "One answer",
+  MCQ_MULTI: "Several answers",
+  TRUE_FALSE: "True or false",
+  TEXT_INPUT: "Typed answer",
+  SUB_QUESTIONS_TEXT: "Sub-questions",
+  ORDERING: "Put in order",
+  MATCHING: "Matching",
+};
+
+/** Types answered by tapping choices (A, B, C…) and marked against an answer key. */
+export function isChoiceType(t: QuestionType): t is "MCQ_SINGLE" | "MCQ_MULTI" | "TRUE_FALSE" {
+  return t === "MCQ_SINGLE" || t === "MCQ_MULTI" || t === "TRUE_FALSE";
+}
+
+/** Types whose answer is a sequence (an order, or one match per item), marked position by position. */
+export function isSequenceType(t: QuestionType): t is "ORDERING" | "MATCHING" {
+  return t === "ORDERING" || t === "MATCHING";
+}
+
+/** Ordering and matching: at least 2 and at most this many items. */
+export const MAX_SEQUENCE_ITEMS = 10;
+
+/** MATCHING: one pair. The answer key is that each left goes with its own right. */
+export interface MatchPair {
+  left: string;
+  right: string;
+}
 
 /**
  * One part of a SUB_QUESTIONS_TEXT question. Each part gets its own answer
@@ -55,12 +87,23 @@ export interface BankQuestion {
   media_url?: string | null;
   media_type?: "image" | "audio" | "video";
   show_media_on_player?: boolean;
+  /**
+   * MCQ: the options. TRUE_FALSE: exactly two, A = true and B = false (labels can be changed, e.g. "จริง" / "เท็จ").
+   * ORDERING: the items written IN THE CORRECT ORDER (A first). Phones get them shuffled.
+   */
   choices?: Choice[];
-  /** MCQ: choice ids. TEXT_INPUT: [canonical, ...aliases]. SUB_QUESTIONS_TEXT: empty (answers live on each part). */
+  /**
+   * MCQ / TRUE_FALSE: choice ids. TEXT_INPUT: [canonical, ...aliases].
+   * SUB_QUESTIONS_TEXT: empty (answers live on each part).
+   * ORDERING / MATCHING: the ids in order ("A","B","C"…), kept for readability; the key is always that order.
+   */
   correct_answers_array: string[];
   /** SUB_QUESTIONS_TEXT only. */
   sub_questions?: SubQuestion[];
+  /** MATCHING only: each left goes with its own right. Phones get the rights shuffled. */
+  pairs?: MatchPair[];
   text_matching?: { fuzzy?: boolean; max_typos?: 0 | 1 | 2; ignore_articles?: boolean };
+  /** MCQ_MULTI, ORDERING, MATCHING: partial credit (default) or all-or-nothing. */
   multi_scoring?: "PARTIAL" | "ALL_OR_NOTHING";
   time_limit_sec?: number;
   base_points?: number;
@@ -78,7 +121,13 @@ export interface PublicQuestion {
   media_url: string | null;
   media_type: "image" | "audio" | "video" | null;
   show_media_on_player: boolean;
+  /**
+   * MCQ / TRUE_FALSE: the options. ORDERING: the items, shuffled. MATCHING: the right-hand side, shuffled.
+   * For ORDERING and MATCHING the letters are display letters (A = first shown), so they reveal nothing.
+   */
   choices: Choice[] | null;
+  /** MATCHING: the left-hand side, in the author's order. Each needs one letter from `choices`. */
+  match_left?: string[] | null;
   /** SUB_QUESTIONS_TEXT: the parts, without their answers. */
   sub_questions: { sub_id: string; prompt: string; points: number }[] | null;
   /** MCQ_MULTI: how many options to pick is intentionally NOT exposed. */
@@ -125,7 +174,12 @@ export interface AntiCheatFlag {
 export interface Submission {
   team_id: string;
   question_index: number;
-  /** MCQ: choice ids. TEXT_INPUT: [rawText]. SUB_QUESTIONS_TEXT: one entry per part, in order ("" = left blank). */
+  /**
+   * MCQ: choice ids. TEXT_INPUT: [rawText]. SUB_QUESTIONS_TEXT: one entry per part, in order ("" = left blank).
+   * ORDERING: the items in the order the team put them, as the question's own ids (A = first in the correct order).
+   * MATCHING: for each left in turn, the id of the right the team picked (A = the right of pair 1; "" = left blank).
+   * ORDERING / MATCHING are stored in the question's own ids (not the shuffled display letters), so the log reads the same as the bank.
+   */
   answer: string[];
   /** Server receive time. Never trust a client timestamp for scoring. */
   received_at: number;
@@ -134,12 +188,14 @@ export interface Submission {
 export interface QuestionResult {
   team_id: string;
   correct: boolean;
-  /** 0..1 for partial MCQ_MULTI credit; 1 or 0 otherwise. */
+  /** 0..1 for partial credit (MCQ_MULTI, sub-questions, ordering, matching); 1 or 0 otherwise. */
   fraction: number;
   /** SUB_QUESTIONS_TEXT: which parts were right, in order. */
   sub_correct?: boolean[];
   base_points: number;
   speed_bonus: number;
+  /** DECAY scoring: the share of the points kept for answering at that moment (1 = instantly, 0.5 = at the buzzer). */
+  time_factor?: number;
   points: number;
   answered: boolean;
   elapsed_ms: number | null;
@@ -174,6 +230,8 @@ export interface RevealPayload {
   review_changes?: number;
   explanation: string | null;
   results: Record<string, Pick<QuestionResult, "correct" | "points" | "fraction" | "answered" | "voided_by_anti_cheat" | "sub_correct">>;
+  /** ORDERING: the items in the correct order. MATCHING: "left → right" for each pair. */
+  sequence_reveal?: { text: string; media_url?: string; correct_teams: number }[] | null;
   /** SUB_QUESTIONS_TEXT: each part's answer and how many teams got it. */
   sub_reveal: { sub_id: string; prompt: string; answer: string; aliases: string[]; points: number; correct_teams: number }[] | null;
   answer_distribution: Record<string, number> | null; // MCQ only: choice -> count
@@ -207,6 +265,8 @@ export interface RoomState {
   /** Host's remote control for the question's sound or video on the big screen. seq increases on every press. */
   media?: MediaControl | null;
   settings: RoomSettings;
+  /** Server-only (never sent to screens): shuffles ordering and matching items so the display order can't be worked out. */
+  secret_seed?: string;
   created_at: number;
   updated_at: number;
 }
@@ -223,13 +283,27 @@ export interface RoomSettings {
   focus_violation_ms: number;
   anti_cheat_policy: "FLAG_ONLY" | "VOID_CURRENT_ANSWER";
   max_teams: number;
+  /**
+   * Chosen when the room is created:
+   *   CLASSIC   full points for a right answer, plus the speed bonus (+20 within 5 s, +10 within 10 s by default)
+   *   ACCURACY  full points for a right answer whenever it arrives in time; no speed bonus
+   *   DECAY     points shrink steadily with time: 100% at once, 50% at the buzzer; no separate bonus
+   * Missing (rooms made before this setting existed) = CLASSIC.
+   */
+  scoring_mode?: ScoringMode;
 }
+
+export type ScoringMode = "CLASSIC" | "ACCURACY" | "DECAY";
+export const SCORING_MODES: ScoringMode[] = ["CLASSIC", "ACCURACY", "DECAY"];
+/** DECAY: the share of the points still given for an answer that arrives at the very end. */
+export const DECAY_FLOOR = 0.5;
 
 export const DEFAULT_SETTINGS: RoomSettings = {
   submit_grace_ms: 750,
   focus_violation_ms: 3000,
   anti_cheat_policy: "VOID_CURRENT_ANSWER",
   max_teams: 200,
+  scoring_mode: "CLASSIC",
 };
 
 // ---------------------------------------------------------------------------

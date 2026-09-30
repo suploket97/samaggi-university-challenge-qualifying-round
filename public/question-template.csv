@@ -1,5 +1,8 @@
-quiz_pack_id,pack_title,question_id,type,question_text,choice_a,choice_b,choice_c,choice_d,correct_answers,media_url,time_limit_sec,base_points,explanation,sub_1_question,sub_1_answers,sub_2_question,sub_2_answers,sub_3_question,sub_3_answers
-my-first-pack,My First Pack,,MCQ_SINGLE,What is the capital of France?,Berlin,Madrid,Paris,Rome,C,,20,,,,,,,,
-my-first-pack,,,MCQ_MULTI,Which of these are fruits?,Apple,Carrot,Banana,Potato,A|C,,30,,,,,,,,
-my-first-pack,,,TEXT_INPUT,Who wrote Romeo and Juliet?,,,,,William Shakespeare|Shakespeare,,30,,Fuzzy matching forgives small typos,,,,,,
-my-first-pack,,,SUB_QUESTIONS_TEXT,Name the capital city of each country,,,,,,,60,,Each part is marked on its own and the points add up,Australia,Canberra,Canada,Ottawa,Thailand,Bangkok|กรุงเทพมหานคร|กรุงเทพ
+quiz_pack_id,pack_title,question_id,type,question_text,choice_a,choice_b,choice_c,choice_d,correct_answers,media_url,time_limit_sec,base_points,explanation,sub_1_question,sub_1_answers,sub_2_question,sub_2_answers,sub_3_question,sub_3_answers,match_1_left,match_1_right,match_2_left,match_2_right,match_3_left,match_3_right
+my-first-pack,My First Pack,,MCQ_SINGLE,What is the capital of France?,Berlin,Madrid,Paris,Rome,C,,20,,,,,,,,,,,,,,
+my-first-pack,,,MCQ_MULTI,Which of these are fruits?,Apple,Carrot,Banana,Potato,A|C,,30,,,,,,,,,,,,,,
+my-first-pack,,,TEXT_INPUT,Who wrote Romeo and Juliet?,,,,,William Shakespeare|Shakespeare,,30,,Fuzzy matching forgives small typos,,,,,,,,,,,,
+my-first-pack,,,SUB_QUESTIONS_TEXT,Name the capital city of each country,,,,,,,60,,Each part is marked on its own and the points add up,Australia,Canberra,Canada,Ottawa,Thailand,Bangkok|กรุงเทพมหานคร|กรุงเทพ,,,,,,
+my-first-pack,,,TRUE_FALSE,The Great Wall of China can be seen from the Moon with the naked eye.,,,,,False,,15,,Choice columns optional: labels default to True / False,,,,,,,,,,,,
+my-first-pack,,,ORDERING,"Put these in order, earliest first",Sukhothai,Ayutthaya,Thonburi,Bangkok (Rattanakosin),,,40,,Write the items in the correct order; phones show them shuffled,,,,,,,,,,,,
+my-first-pack,,,MATCHING,Match each country to its capital,,,,,,,45,,Each match_N row is one correct pair,,,,,,,Japan,Tokyo,Australia,Canberra,Canada,Ottawa

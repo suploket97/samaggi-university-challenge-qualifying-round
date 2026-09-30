@@ -6,13 +6,16 @@
  *   quiz_pack_id | pack_title | pack_description | question_id | type |
  *   question_text | choice_a … choice_z | correct_answers | media_url |
  *   sub_1_question | sub_1_answers | sub_1_points … sub_20_* (SUB_QUESTIONS_TEXT) |
+ *   match_1_left | match_1_right … match_10_* (MATCHING) |
+ *   TRUE_FALSE: correct_answers True/False (choice_a / choice_b optional, default "True" / "False") |
+ *   ORDERING: choice_a, choice_b… written in the correct order (correct_answers not needed) |
  *   choice_a_image … choice_z_image (picture choices) | show_on_phones |
  *   pack_time_limit_sec | media_type | time_limit_sec | base_points |
  *   multi_scoring | fuzzy | max_typos | explanation | order
  *
  * lib/bank/export.ts writes these same columns, so an exported pack imports back unchanged.
  */
-import { CHOICE_LETTERS, MAX_SUB_QUESTIONS, type BankQuestion, type Choice, type ChoiceId, type QuestionType, type SubQuestion } from "@/lib/game/types";
+import { CHOICE_LETTERS, MAX_SEQUENCE_ITEMS, MAX_SUB_QUESTIONS, type BankQuestion, type Choice, type ChoiceId, type MatchPair, type QuestionType, type SubQuestion } from "@/lib/game/types";
 import type { ImportDoc, ImportPack } from "./types";
 
 export type Row = Record<string, unknown>;
@@ -82,6 +85,12 @@ function headerKey(h: string): string | null {
     const kind = !sq[2] || ["question", "prompt", "q"].includes(sq[2]) ? "question" : sq[2].startsWith("p") ? "points" : "answers";
     return `sub_${Number(sq[1])}_${kind}`;
   }
+  // Matching pairs: match_1_left / match_1_right (also "pair_1_left", "left_1", "match1_r")
+  const mp = k.match(/^(?:match|pair)_?(\d{1,2})_?(left|right|l|r)$/) ?? k.match(/^()(left|right)_?(\d{1,2})$/);
+  if (mp) {
+    const n = Number(mp[1] || mp[3]);
+    return `match_${n}_${mp[2].startsWith("l") ? "left" : "right"}`;
+  }
   // Picture for a choice: choice_a_image, option_b_picture, ...
   const pic = k.match(/^(?:choice|option|opt)_?([a-z])_?(?:image|img|picture|pic|media|media_url)$/);
   if (pic) return `choice_${pic[1]}_media`;
@@ -147,6 +156,9 @@ function parseType(raw: string, hasChoices: boolean, correctCount: number, hasSu
   if (["mcq_single", "mcq", "single", "multiple_choice", "choice", "single_choice", "mc"].includes(t)) return "MCQ_SINGLE";
   if (["mcq_multi", "multi", "multiple", "multi_choice", "multiple_answer", "multi_select", "checkbox"].includes(t)) return "MCQ_MULTI";
   if (["text_input", "text", "short", "short_answer", "open", "input", "free_text"].includes(t)) return "TEXT_INPUT";
+  if (["true_false", "truefalse", "true_or_false", "tf", "t_f", "boolean", "yes_no", "จริงเท็จ", "ถูกผิด", "จริง_เท็จ", "ถูก_ผิด"].includes(t)) return "TRUE_FALSE";
+  if (["ordering", "order", "sequence", "sort", "rank", "ranking", "arrange", "เรียงลำดับ"].includes(t)) return "ORDERING";
+  if (["matching", "match", "pairs", "pair", "pairing", "จับคู่"].includes(t)) return "MATCHING";
   return null;
 }
 
@@ -210,6 +222,14 @@ export function rowsToImport(rows: Row[]): RowsResult {
       if (v || media) choices.push({ choice_id: L, text: v, ...(media ? { media_url: media } : {}) });
     }
 
+    // Matching pairs: match_1_left / match_1_right, up to 10
+    const pairs: MatchPair[] = [];
+    for (let n = 1; n <= MAX_SEQUENCE_ITEMS; n++) {
+      const left = str(r[`match_${n}_left`]);
+      const right = str(r[`match_${n}_right`]);
+      if (left || right) pairs.push({ left, right });
+    }
+
     // Correct answers
     const correctRaw = str(r.correct_answers);
     let correct: string[];
@@ -239,12 +259,26 @@ export function rowsToImport(rows: Row[]): RowsResult {
       subs.push(sqObj);
     }
 
-    const type = parseType(str(r.type), choices.length > 0, correct.length, subs.length > 0);
+    const type = pairs.length && !str(r.type) ? "MATCHING" : parseType(str(r.type), choices.length > 0, correct.length, subs.length > 0);
     if (!type) {
-      problems.push({ row: rowNo, message: `unknown type "${str(r.type)}" — use MCQ_SINGLE, MCQ_MULTI, TEXT_INPUT or SUB_QUESTIONS_TEXT` });
+      problems.push({ row: rowNo, message: `unknown type "${str(r.type)}" — use MCQ_SINGLE, MCQ_MULTI, TRUE_FALSE, TEXT_INPUT, SUB_QUESTIONS_TEXT, ORDERING or MATCHING` });
       return;
     }
     if (type === "SUB_QUESTIONS_TEXT") correct = [];
+    if (type === "TRUE_FALSE") {
+      // Labels default to True / False; the answer can be written as True/False, T/F, A/B, yes/no, จริง/เท็จ or the label.
+      if (choices.length === 0) choices.push({ choice_id: "A", text: "True" }, { choice_id: "B", text: "False" });
+      const tf = correctRaw.trim().toLowerCase();
+      const isTrue = ["true", "t", "yes", "y", "1", "จริง", "ถูก", "a"].includes(tf) || tf === (choices[0]?.text ?? "").toLowerCase();
+      const isFalse = ["false", "f", "no", "n", "0", "เท็จ", "ผิด", "b"].includes(tf) || tf === (choices[1]?.text ?? "").toLowerCase();
+      correct = isTrue ? ["A"] : isFalse ? ["B"] : correctRaw ? [correctRaw] : [];
+    }
+    if (type === "ORDERING") {
+      // Written in the correct order; close any gaps (choice_a, choice_c → A, B).
+      choices.forEach((c, j) => (c.choice_id = LETTERS[j]));
+      correct = choices.map((c) => c.choice_id);
+    }
+    if (type === "MATCHING") correct = CHOICE_LETTERS.slice(0, pairs.length);
 
     let qid = str(r.question_id) ? keepOrSlug(str(r.question_id)) : `${packId.slice(0, 40)}-${shortHash(text)}`;
     if (usedIds.has(qid) && !str(r.question_id)) qid = `${qid}-${rowNo}`;
@@ -257,7 +291,8 @@ export function rowsToImport(rows: Row[]): RowsResult {
       question_text: text,
       correct_answers_array: correct,
     };
-    if (type === "MCQ_SINGLE" || type === "MCQ_MULTI") q.choices = choices;
+    if (type === "MCQ_SINGLE" || type === "MCQ_MULTI" || type === "TRUE_FALSE" || type === "ORDERING") q.choices = choices;
+    if (type === "MATCHING") q.pairs = pairs;
     if (type === "SUB_QUESTIONS_TEXT") q.sub_questions = subs;
 
     const media = str(r.media_url);
@@ -277,7 +312,7 @@ export function rowsToImport(rows: Row[]): RowsResult {
     const expl = str(r.explanation);
     if (expl) q.explanation = expl;
 
-    if (type === "MCQ_MULTI") {
+    if (type === "MCQ_MULTI" || type === "ORDERING" || type === "MATCHING") {
       const ms = str(r.multi_scoring).toLowerCase();
       if (ms) q.multi_scoring = ms.startsWith("all") ? "ALL_OR_NOTHING" : "PARTIAL";
     }

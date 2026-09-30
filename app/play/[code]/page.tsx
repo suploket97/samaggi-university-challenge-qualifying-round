@@ -214,6 +214,10 @@ function Screen({
             ? `“${myAnswer[0]}”`
             : q.type === "SUB_QUESTIONS_TEXT"
             ? `${myAnswer.filter((a) => a.trim()).length} of ${myAnswer.length} parts`
+            : q.type === "ORDERING"
+            ? myAnswer.map((id) => q.choices?.find((c) => c.choice_id === id)?.text || id).join(" → ")
+            : q.type === "MATCHING"
+            ? `${myAnswer.filter(Boolean).length} of ${myAnswer.length} matched`
             : myAnswer.map((id) => `${id}${q.choices?.find((c) => c.choice_id === id) ? ` · ${q.choices.find((c) => c.choice_id === id)!.text}` : ""}`).join(", ")
           : null;
       return (
@@ -254,7 +258,13 @@ function Screen({
         view.sub_correct && snapshot.current_question?.sub_questions
           ? snapshot.current_question.sub_questions.map((sq, i) => ({ prompt: sq.prompt, ok: !!view.sub_correct![i], points: sq.points }))
           : null;
-      return <ResultPanel {...map} outcome={view.outcome} points={view.points} rank={view.rank} teamCount={view.team_count} parts={parts} />;
+      const cq = snapshot.current_question;
+      const n = cq?.type === "MATCHING" ? cq.match_left?.length ?? 0 : cq?.type === "ORDERING" ? cq.choices?.length ?? 0 : 0;
+      const detail =
+        n && view.outcome === "PARTIAL"
+          ? `${Math.round(view.fraction * n)} of ${n} ${cq!.type === "MATCHING" ? "matched correctly" : "in the right place"}`
+          : null;
+      return <ResultPanel {...map} outcome={view.outcome} points={view.points} rank={view.rank} teamCount={view.team_count} parts={parts} detail={detail} />;
     }
 
     case "STANDING":
@@ -304,9 +314,11 @@ function Screen({
 }
 
 function ResultPanel({
-  icon, title, cls, outcome, points, rank, teamCount, parts,
+  icon, title, cls, outcome, points, rank, teamCount, parts, detail,
 }: {
   icon: string; title: string; cls: string; outcome: string; points: number; rank: number | null; teamCount: number;
+  /** Ordering / matching: "3 of 4 in the right place". */
+  detail?: string | null;
   /** SUB_QUESTIONS_TEXT: each part, right or wrong. */
   parts: { prompt: string; ok: boolean; points: number }[] | null;
 }) {
@@ -322,6 +334,7 @@ function ResultPanel({
       <div className={cx("text-8xl", outcome === "INCORRECT" ? "animate-shake" : "animate-pop")}>{icon}</div>
       <p className="mt-6 font-headline text-5xl font-black tracking-tight">{title}</p>
       <p className="mt-4 font-mono text-3xl font-bold tabular">+{points}</p>
+      {detail ? <p className="mt-2 text-lg font-semibold opacity-90">{detail}</p> : null}
       {parts ? (
         <ul className="mt-5 w-full max-w-xs space-y-1.5 text-left">
           {parts.map((p, i) => (
@@ -411,6 +424,38 @@ function AnswerScreen({
         </div>
       </div>
     );
+  }
+
+  if (q.type === "TRUE_FALSE") {
+    return (
+      <div className="flex flex-1 flex-col">
+        {header}
+        <div className="grid flex-1 grid-cols-2 content-start gap-3">
+          {choices.slice(0, 2).map((c, i) => (
+            <button
+              key={c.choice_id}
+              disabled={sending}
+              onClick={() => onSubmit([c.choice_id])}
+              className={cx(
+                "flex min-h-40 flex-col items-center justify-center gap-2 rounded-3xl border-2 p-4 text-center shadow-lg transition active:scale-[0.97]",
+                i === 0 ? "border-good bg-good/20 text-good" : "border-bad bg-bad/20 text-bad",
+              )}
+            >
+              <span className="text-5xl font-black">{i === 0 ? "✔" : "✘"}</span>
+              <span className="break-words text-2xl font-bold text-white">{c.text || (i === 0 ? "True" : "False")}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (q.type === "ORDERING") {
+    return <OrderingForm q={q} header={header} onSubmit={onSubmit} sending={sending} />;
+  }
+
+  if (q.type === "MATCHING") {
+    return <MatchingForm q={q} header={header} onSubmit={onSubmit} sending={sending} />;
   }
 
   if (q.type === "MCQ_MULTI") {
@@ -546,5 +591,130 @@ function SubQuestionsForm({
         Submit {filled} of {parts.length} answers
       </Button>
     </form>
+  );
+}
+
+/**
+ * ORDERING: tap the items in order (first → last). Tap a placed item to take
+ * it back out; arrows nudge it up or down. Sent once every item is placed.
+ */
+function OrderingForm({ q, header, onSubmit, sending }: { q: PublicQuestion; header: React.ReactNode; onSubmit: (a: string[]) => void; sending: boolean }) {
+  const items = q.choices ?? [];
+  const [order, setOrder] = useState<string[]>([]);
+  const byId = (id: string) => items.find((c) => c.choice_id === id)!;
+  const left = items.filter((c) => !order.includes(c.choice_id));
+  const move = (i: number, d: -1 | 1) =>
+    setOrder((o) => {
+      const j = i + d;
+      if (j < 0 || j >= o.length) return o;
+      const n = [...o];
+      [n[i], n[j]] = [n[j], n[i]];
+      return n;
+    });
+  return (
+    <div className="flex flex-1 flex-col">
+      {header}
+      <p className="mb-3 text-sm text-gold">Tap the items in order, first to last. Tap a placed item to take it back.</p>
+      <ol className="space-y-2">
+        {items.map((_, i) => {
+          const id = order[i];
+          const c = id ? byId(id) : null;
+          return (
+            <li key={i} className={cx("flex min-h-14 items-center gap-2 rounded-2xl border-2 p-2", c ? "border-gold bg-gold/10" : "border-dashed border-line")}>
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gold font-bold text-ink tabular">{i + 1}</span>
+              {c ? (
+                <>
+                  <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => setOrder((o) => o.filter((x) => x !== id))}>
+                    {c.media_url ? <SafeImage src={c.media_url} className="h-12 w-16 shrink-0 rounded-lg bg-black/20 object-cover" /> : null}
+                    <span className="min-w-0 break-words text-lg font-semibold leading-tight">{c.text}</span>
+                  </button>
+                  <span className="flex shrink-0 flex-col">
+                    <button type="button" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)} className="h-6 w-9 rounded text-muted disabled:opacity-30">▲</button>
+                    <button type="button" aria-label="Move down" disabled={i === order.length - 1} onClick={() => move(i, 1)} className="h-6 w-9 rounded text-muted disabled:opacity-30">▼</button>
+                  </span>
+                </>
+              ) : (
+                <span className="text-sm text-muted">{i === order.length ? "Tap an item below" : ""}</span>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+      {left.length ? (
+        <div className="mt-4 grid grid-cols-1 gap-2">
+          {left.map((c) => (
+            <button
+              key={c.choice_id}
+              type="button"
+              onClick={() => setOrder((o) => [...o, c.choice_id])}
+              className="flex min-h-14 items-center gap-3 rounded-2xl border-2 border-line bg-panel p-3 text-left transition active:scale-[0.98]"
+            >
+              {c.media_url ? <SafeImage src={c.media_url} className="h-12 w-16 shrink-0 rounded-lg bg-black/20 object-cover" /> : null}
+              <span className="min-w-0 flex-1 break-words text-lg font-semibold leading-tight">{c.text}</span>
+              <span className="text-xl text-gold">＋</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <div className="mt-5 flex gap-2">
+        {order.length ? (
+          <Button variant="secondary" size="lg" onClick={() => setOrder([])} disabled={sending}>
+            Clear
+          </Button>
+        ) : null}
+        <Button size="lg" className="flex-1" disabled={order.length !== items.length} loading={sending} onClick={() => onSubmit(order)}>
+          {order.length === items.length ? "Submit order" : `Place ${items.length - order.length} more`}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** MATCHING: pick one match for each item. Each match can be used once. */
+function MatchingForm({ q, header, onSubmit, sending }: { q: PublicQuestion; header: React.ReactNode; onSubmit: (a: string[]) => void; sending: boolean }) {
+  const lefts = q.match_left ?? [];
+  const rights = q.choices ?? [];
+  const [picks, setPicks] = useState<string[]>(() => lefts.map(() => ""));
+  const filled = picks.filter(Boolean).length;
+  return (
+    <div className="flex flex-1 flex-col">
+      {header}
+      <p className="mb-3 text-sm text-gold">Pick the match for each item. Each match can be used once.</p>
+      <ol className="space-y-3">
+        {lefts.map((l, i) => (
+          <li key={i} className="rounded-2xl border border-line bg-panel p-3">
+            <label className="block">
+              <span className="mb-2 flex items-baseline gap-2">
+                <span className="shrink-0 font-bold text-gold tabular">{i + 1}.</span>
+                <span className="min-w-0 flex-1 break-words text-lg font-semibold leading-snug">{l}</span>
+              </span>
+              <select
+                className={cx(inputClass, "h-12 text-lg", picks[i] ? "border-gold" : "")}
+                value={picks[i]}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setPicks((ps) => ps.map((x, j) => (j === i ? v : x === v ? "" : x)));
+                }}
+              >
+                <option value="">— choose —</option>
+                {rights.map((r) => {
+                  const usedBy = picks.findIndex((p, j) => p === r.choice_id && j !== i);
+                  return (
+                    <option key={r.choice_id} value={r.choice_id}>
+                      {r.text}
+                      {usedBy >= 0 ? ` (now on ${usedBy + 1})` : ""}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+          </li>
+        ))}
+      </ol>
+      <p className="mt-2 text-xs text-muted">Choosing a match that is already used moves it here.</p>
+      <Button size="lg" className="mt-4 w-full" disabled={filled === 0} loading={sending} onClick={() => onSubmit(picks)}>
+        Submit {filled} of {lefts.length} matches
+      </Button>
+    </div>
   );
 }

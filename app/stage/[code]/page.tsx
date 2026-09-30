@@ -165,6 +165,8 @@ function StageScreen({
             </div>
           </div>
           {q.type === "MCQ_MULTI" ? <p className="-mt-2 text-2xl text-gold">Pick all that apply</p> : null}
+          {q.type === "ORDERING" ? <p className="-mt-2 text-2xl text-gold">📱 Put these in order on your phone, first to last</p> : null}
+          {q.type === "MATCHING" ? <p className="-mt-2 text-2xl text-gold">📱 Match each item to its partner on your phone</p> : null}
           <div
             className={cx(
               "grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-6",
@@ -177,7 +179,41 @@ function StageScreen({
                 {!q.choices && !q.sub_questions ? <p className="shrink-0 font-display text-2xl text-muted">✍️ Type your answer on your phone</p> : null}
               </div>
             ) : null}
-            {q.choices ? (
+            {q.type === "ORDERING" && q.choices ? (
+              <FitText as="ul" fill watch={q.choices.map((c) => c.text).join("\n")} max={34} min={14} className={cx("grid content-center gap-[0.4em]", q.choices.length > 6 && !hasMedia && "grid-cols-2")}>
+                {q.choices.map((c) => (
+                  <li key={c.choice_id} className="flex items-center gap-[0.6em] rounded-2xl border-2 border-line bg-panel/70 px-[0.7em] py-[0.4em]">
+                    {c.media_url ? <SafeImage src={c.media_url} className="h-[2.4em] w-[3.2em] shrink-0 rounded-lg bg-black/20 object-cover" /> : null}
+                    <span className="min-w-0 flex-1 break-words font-display font-semibold leading-snug">{c.text}</span>
+                  </li>
+                ))}
+              </FitText>
+            ) : q.type === "MATCHING" && q.choices && q.match_left ? (
+              <FitText
+                as="div"
+                fill
+                watch={[...q.match_left, ...q.choices.map((c) => c.text)].join("\n")}
+                max={32}
+                min={14}
+                className="grid grid-cols-2 content-center gap-x-[1.2em] gap-y-[0.4em]"
+              >
+                <ol className="space-y-[0.4em]">
+                  {q.match_left.map((l, i) => (
+                    <li key={i} className="flex items-baseline gap-[0.5em] rounded-2xl border-2 border-gold/50 bg-gold/10 px-[0.7em] py-[0.35em]">
+                      <span className="font-display font-bold text-gold tabular">{i + 1}.</span>
+                      <span className="min-w-0 flex-1 break-words font-display font-semibold leading-snug">{l}</span>
+                    </li>
+                  ))}
+                </ol>
+                <ul className="space-y-[0.4em]">
+                  {q.choices.map((c) => (
+                    <li key={c.choice_id} className="rounded-2xl border-2 border-line bg-panel/70 px-[0.7em] py-[0.35em] font-display font-semibold leading-snug break-words">
+                      {c.text}
+                    </li>
+                  ))}
+                </ul>
+              </FitText>
+            ) : q.choices ? (
               <div
                 className={cx("grid min-h-0 content-center", q.choices.length > 8 ? "gap-2" : "gap-4", choiceImages && !hasMedia && "auto-rows-fr")}
                 style={{ gridTemplateColumns: `repeat(${stageChoiceColumns(q.choices.length, hasMedia)}, minmax(0, 1fr))` }}
@@ -238,7 +274,35 @@ function StageScreen({
                 <SafeImage src={picture} className="max-h-full max-w-full" />
               </div>
             ) : null}
-            {view.sub_reveal ? (
+            {view.sequence_reveal ? (
+              <div className="flex min-h-0 flex-col gap-3">
+                <FitText
+                  as="ol"
+                  fill
+                  watch={view.sequence_reveal.map((x) => x.text).join("\n")}
+                  max={34}
+                  min={13}
+                  className={cx("grid content-center gap-[0.35em]", view.sequence_reveal.length > 6 && !picture && "grid-cols-2")}
+                >
+                  {view.sequence_reveal.map((it, i) => (
+                    <li key={i} className="flex items-center gap-[0.6em] rounded-2xl border-2 border-good/50 bg-good/10 px-[0.7em] py-[0.3em] animate-rise" style={{ animationDelay: `${i * 140}ms` }}>
+                      <span className="grid h-[1.6em] w-[1.6em] shrink-0 place-items-center rounded-lg bg-good font-display font-bold text-ink tabular">{i + 1}</span>
+                      {it.media_url ? <SafeImage src={it.media_url} className="h-[2.2em] w-[3em] shrink-0 rounded-lg bg-black/20 object-cover" /> : null}
+                      <span className="min-w-0 flex-1 break-words font-display font-bold leading-snug text-white">{it.text}</span>
+                      <span className="shrink-0 text-right">
+                        <span className="block font-mono text-[0.7em] font-bold tabular">
+                          {it.correct_teams}/{view.answered_team_count}
+                        </span>
+                        <span className="block text-[0.4em] text-muted">{q.type === "MATCHING" ? "matched" : "in place"}</span>
+                      </span>
+                    </li>
+                  ))}
+                </FitText>
+                {view.host_accepted.length ? (
+                  <p className="shrink-0 text-xl text-gold">Also accepted by the judges: {view.host_accepted.join(" · ")}</p>
+                ) : null}
+              </div>
+            ) : view.sub_reveal ? (
               <FitText
                 as="ol"
                 watch={view.sub_reveal.map((x) => x.prompt + x.answer).join("\n")}
@@ -295,7 +359,8 @@ function StageScreen({
           <div className="flex items-end justify-between gap-8">
             {view.explanation ? <p className="max-w-4xl text-2xl text-muted">💡 {view.explanation}</p> : <span />}
             <p className="shrink-0 font-headline text-3xl font-bold">
-              <span className="text-good tabular">{view.correct_team_count}</span> {view.correct_team_count === 1 ? "team" : "teams"} got {view.sub_reveal ? "every part" : "it"}
+              <span className="text-good tabular">{view.correct_team_count}</span> {view.correct_team_count === 1 ? "team" : "teams"} got{" "}
+              {view.sub_reveal ? "every part" : q.type === "ORDERING" ? "the whole order" : q.type === "MATCHING" ? "every match" : "it"}
             </p>
           </div>
         </div>

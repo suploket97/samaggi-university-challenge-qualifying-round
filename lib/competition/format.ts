@@ -3,7 +3,8 @@
  * explanations, tie-break notes, a timeline and spreadsheet rows. Pure
  * functions, shared by the log page, the printed report and the exports.
  */
-import type { BankQuestion, ScoreRow } from "@/lib/game/types";
+import type { BankQuestion, RoomSettings, ScoreRow } from "@/lib/game/types";
+import { describeSequence, describeSequenceKey } from "@/lib/game/sequence";
 import type { MarkOverride, TextMatch } from "@/lib/game/scoring";
 import type { AnswerRecord, CompetitionDetail, CompetitionQuestion, CompetitionTeam } from "./types";
 
@@ -53,6 +54,7 @@ export function answerText(q: BankQuestion, a: AnswerRecord): string {
   if (!a.answered || !a.answer) return "";
   if (q.type === "TEXT_INPUT") return a.answer[0] ?? "";
   if (q.type === "SUB_QUESTIONS_TEXT") return a.answer.map((x, i) => `${i + 1}) ${x || "—"}`).join(" · ");
+  if (q.type === "ORDERING" || q.type === "MATCHING") return describeSequence(q, a.answer);
   return a.answer.map((id) => choiceLabel(q, id)).join(", ");
 }
 
@@ -60,6 +62,7 @@ export function answerText(q: BankQuestion, a: AnswerRecord): string {
 export function acceptedText(q: BankQuestion): string {
   if (q.type === "TEXT_INPUT") return q.correct_answers_array.join(" / ");
   if (q.type === "SUB_QUESTIONS_TEXT") return (q.sub_questions ?? []).map((s, i) => `${i + 1}) ${s.correct_answers_array.join(" / ")}`).join(" · ");
+  if (q.type === "ORDERING" || q.type === "MATCHING") return describeSequenceKey(q);
   return q.correct_answers_array.map((id) => choiceLabel(q, id)).join(", ");
 }
 
@@ -105,8 +108,25 @@ export const VERDICT_LABEL: Record<Verdict, string> = {
   LOCKED_OUT: "Locked out (left the screen)",
 };
 
+/** Scoring modes in words (chosen when the room was created). */
+export const SCORING_MODE_LABEL: Record<NonNullable<RoomSettings["scoring_mode"]>, string> = {
+  CLASSIC: "Classic: points for a right answer + speed bonus",
+  ACCURACY: "Accuracy only: full points whenever the answer arrives in time, no speed bonus",
+  DECAY: "Speed decay: points shrink from 100% (instant) to 50% (at the buzzer)",
+};
+
+/** DECAY scoring: "×0.83 for time", added to the marking note. */
+function timeNote(a: AnswerRecord): string {
+  return a.time_factor !== undefined && a.fraction > 0 ? ` Points ×${a.time_factor.toFixed(2)} for answering after ${seconds(a.elapsed_ms)} (speed decay).` : "";
+}
+
 /** One-line explanation of how an answer was marked. */
 export function markingNote(q: BankQuestion, a: AnswerRecord): string {
+  const note = baseMarkingNote(q, a);
+  return a.answered && !a.voided ? note + timeNote(a) : note;
+}
+
+function baseMarkingNote(q: BankQuestion, a: AnswerRecord): string {
   if (a.voided) {
     const f = a.flags.find((x) => x.kind === "FOCUS_LOST");
     return `Left the quiz screen${f?.duration_ms ? ` for ${seconds(f.duration_ms)}` : ""} before answering, so this question was locked for the team.`;
@@ -115,6 +135,15 @@ export function markingNote(q: BankQuestion, a: AnswerRecord): string {
   const m = a.marking;
   if (!m) return "";
   if (q.type === "TEXT_INPUT") return matchLabel(m.text);
+  if (m.sequence) {
+    const sq = m.sequence;
+    const what = q.type === "MATCHING" ? "matched correctly" : "in the right place";
+    const auto = sq.hits === sq.n ? "all correct" : `${sq.hits} of ${sq.n} ${what}`;
+    if (sq.override === "CORRECT") return `Marked correct by the host during the review (automatic marking: ${auto}).`;
+    if (sq.override === "WRONG") return `Marked wrong by the host during the review (automatic marking: ${auto}).`;
+    if (sq.hits === sq.n) return `All ${sq.n} ${what}.`;
+    return `${sq.hits} of ${sq.n} ${what}${a.fraction > 0 ? ` (partial credit: ${Math.round(a.fraction * 100)}%)` : q.multi_scoring === "ALL_OR_NOTHING" ? " (all-or-nothing: no points)" : ""}.`;
+  }
   if (q.type === "SUB_QUESTIONS_TEXT")
     return (m.parts ?? []).map((p, i) => `${i + 1}) ${p.correct ? `✔ +${p.points}` : "✘"} ${matchLabel(p.match)}`).join(" · ");
   const right = new Set(m.correct_ids ?? []);
@@ -313,6 +342,7 @@ export function answerRows(d: CompetitionDetail): Row[] {
         "How it was marked": markingNote(cq.question, a),
         Points: a.points,
         "Speed bonus": a.speed_bonus,
+        "Time factor": a.time_factor ?? "",
         "Received at": a.received_at ? clock(a.received_at, true) : "",
         "Seconds after start": a.elapsed_ms === null ? "" : Math.round(a.elapsed_ms / 100) / 10,
         "Order sent": order.get(a.team_id)?.pos ?? "",
@@ -334,6 +364,7 @@ export function questionRows(d: CompetitionDetail): Row[] {
       "Question text": cq.question.question_text,
       "Accepted answers": acceptedText(cq.question),
       "Time limit (s)": cq.effective.time_limit_sec,
+      Scoring: cq.effective.scoring_mode ?? "CLASSIC",
       Points: cq.effective.base_points,
       Opened: clock(cq.started_at),
       Closed: clock(cq.closed_at),

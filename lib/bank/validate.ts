@@ -7,6 +7,7 @@ import Ajv2020 from "ajv/dist/2020";
 import type { ErrorObject } from "ajv";
 import schema from "@/schemas/question-bank.schema.json";
 import type { ImportDoc, ImportIssue } from "./types";
+import { CHOICE_LETTERS } from "@/lib/game/types";
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 ajv.addFormat("uri-reference", /^(https?:\/\/\S+|\/\S*)$/i);
@@ -29,6 +30,15 @@ function describe(e: ErrorObject): string {
     if (e.keyword === "false schema") return "only “sub-questions” questions can have parts";
   }
   if (e.keyword === "required" && (e.params as { missingProperty: string }).missingProperty === "sub_questions") return "add at least one part";
+  // Matching pairs
+  const pair = e.instancePath.match(/\/pairs\/(\d+)(?:\/(left|right))?/);
+  if (pair) return `pair ${Number(pair[1]) + 1} needs both sides filled in (up to 200 characters each)`;
+  if (e.instancePath.endsWith("/pairs")) {
+    if (e.keyword === "minItems") return "a matching question needs at least 2 pairs";
+    if (e.keyword === "maxItems") return "a matching question can have at most 10 pairs";
+    if (e.keyword === "false schema") return "only matching questions can have pairs";
+  }
+  if (e.keyword === "required" && (e.params as { missingProperty: string }).missingProperty === "pairs") return "add at least 2 pairs";
   // An empty choice trips three rules at once (text length, media_url, anyOf); report it once, plainly.
   const choice = e.instancePath.match(/\/choices\/(\d+)(\/text)?$/);
   if (choice && ["minLength", "required", "anyOf"].includes(e.keyword)) {
@@ -47,10 +57,14 @@ function describe(e: ErrorObject): string {
         return `${field} must be 3–64 lowercase letters, numbers, - or _`;
       return `${field} has an invalid format`;
     case "maxItems":
-      if (field === "correct_answers_array") return "single-choice questions must have exactly one correct answer";
-      return field === "choices" ? "a question can have at most 26 choices (A–Z)" : `${field} has too many items`;
+      if (field === "correct_answers_array") return "single-choice and true/false questions must have exactly one correct answer";
+      if (field === "choices") {
+        const lim = (e.params as { limit: number }).limit;
+        return lim === 2 ? "true/false questions have exactly 2 choices (true and false)" : lim === 10 ? "an ordering question can have at most 10 items" : "a question can have at most 26 choices (A–Z)";
+      }
+      return `${field} has too many items`;
     case "minItems":
-      return field === "choices" ? "MCQ questions need at least 2 choices" : `${field} needs at least one value`;
+      return field === "choices" ? "this question type needs at least 2 choices (or items)" : `${field} needs at least one value`;
     case "not":
       return "text questions must not have choices";
     case "false schema":
@@ -89,7 +103,29 @@ export function validateImport(input: unknown): { doc: ImportDoc | null; issues:
     if (prev !== undefined) issues.push({ question_index: i, message: `duplicate question_id "${q.question_id}" (also used by question ${prev + 1})` });
     ids.set(q.question_id, i);
 
-    if (q.type === "MCQ_SINGLE" || q.type === "MCQ_MULTI") {
+    if (q.type === "TRUE_FALSE") {
+      for (const a of q.correct_answers_array) {
+        if (a !== "A" && a !== "B") issues.push({ question_index: i, message: `true/false answer must be A (true) or B (false), not "${a}"` });
+      }
+    }
+    if (q.type === "ORDERING") {
+      // The key is the written order; letters are filled in A, B, C… so gaps don't matter.
+      q.choices = (q.choices ?? []).map((c, j) => ({ ...c, choice_id: CHOICE_LETTERS[j] }));
+      q.correct_answers_array = q.choices.map((c) => c.choice_id);
+      (q.choices ?? []).forEach((c) => {
+        if (!c.text?.trim() && !c.media_url) issues.push({ question_index: i, message: `item ${c.choice_id} needs text or a picture` });
+      });
+      const texts = (q.choices ?? []).filter((c) => !c.media_url).map((c) => c.text.trim().toLowerCase());
+      if (new Set(texts).size !== texts.length) issues.push({ question_index: i, message: "two items have the same text, so the order would be ambiguous" });
+    }
+    if (q.type === "MATCHING") {
+      q.correct_answers_array = CHOICE_LETTERS.slice(0, (q.pairs ?? []).length);
+      const lefts = (q.pairs ?? []).map((p) => p.left.trim().toLowerCase());
+      const rights = (q.pairs ?? []).map((p) => p.right.trim().toLowerCase());
+      if (new Set(lefts).size !== lefts.length) issues.push({ question_index: i, message: "two pairs have the same left-hand side" });
+      if (new Set(rights).size !== rights.length) issues.push({ question_index: i, message: "two pairs have the same right-hand side, so the matches would be ambiguous" });
+    }
+    if (q.type === "MCQ_SINGLE" || q.type === "MCQ_MULTI" || q.type === "TRUE_FALSE") {
       const letters = new Set((q.choices ?? []).map((c) => c.choice_id));
       if (letters.size !== (q.choices ?? []).length) issues.push({ question_index: i, message: "two choices share the same letter" });
       (q.choices ?? []).forEach((c) => {

@@ -8,6 +8,7 @@
 import type { AntiCheatFlag, BankQuestion, RoomCommand, RoomState, Team } from "./types";
 import type { PackInfo } from "./engine";
 import { effectiveChoiceKey, judgeText, markSubQuestions, type MarkOverride, type Overrides, type TextMatch } from "./scoring";
+import { describeSequence, markSequence, sequenceLength, sequenceReviewKey } from "./sequence";
 
 /** How an answer was marked, in enough detail to explain it to a team. */
 export interface AnswerMarking {
@@ -20,6 +21,8 @@ export interface AnswerMarking {
   original_ids?: string[];
   /** SUB_QUESTIONS_TEXT: every part on its own. */
   parts?: { given: string; match: TextMatch; correct: boolean; points: number }[];
+  /** ORDERING / MATCHING: the answer in words, which positions were right, and any host decision on it. */
+  sequence?: { given: string; correct: boolean[]; hits: number; n: number; override?: "CORRECT" | "WRONG" };
 }
 
 /** One team's answer to one question, as marked at the reveal. */
@@ -37,6 +40,8 @@ export interface AnswerRecord {
   fraction: number;
   base_points: number;
   speed_bonus: number;
+  /** DECAY scoring: the share of the points kept for the time taken (1 = instantly, 0.5 = at the buzzer). */
+  time_factor?: number;
   points: number;
   /** Locked out of this question because the team left the quiz screen before answering. */
   voided: boolean;
@@ -109,6 +114,12 @@ export function explainAnswer(q: BankQuestion, answer: string[], basePoints: num
           };
         }),
       };
+    }
+    case "ORDERING":
+    case "MATCHING": {
+      const m = markSequence(sequenceLength(q), answer);
+      const o = overrides?.[sequenceReviewKey(answer)];
+      return { sequence: { given: describeSequence(q, answer), correct: m.correct, hits: m.hits, n: m.n, ...(o ? { override: o.verdict } : {}) } };
     }
     default: {
       const key = effectiveChoiceKey(q, overrides);
@@ -186,6 +197,9 @@ export function questionStats(q: BankQuestion, answers: AnswerRecord[], override
       const parts = answered.map((a) => a.marking?.parts?.[i]).filter((p): p is NonNullable<typeof p> => !!p);
       return { correct: parts.filter((p) => p.correct).length, wrong_answers: topCounts(parts.filter((p) => !p.correct && p.given).map((p) => p.given), 5) };
     });
+  } else if (q.type === "ORDERING" || q.type === "MATCHING") {
+    // The most common answers that weren't fully right.
+    stats.wrong_answers = topCounts(answered.filter((a) => !a.correct).map((a) => a.marking?.sequence?.given ?? ""), 10);
   } else {
     // MCQ: how often each wrong choice was picked.
     const right = new Set(answers.find((a) => a.marking?.correct_ids)?.marking?.correct_ids ?? q.correct_answers_array);

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/client/api";
 import type { CompetitionDetail } from "@/lib/competition/types";
 import {
+  SCORING_MODE_LABEL,
   VERDICT_LABEL,
   acceptedText,
   answerText,
@@ -66,6 +67,7 @@ export function CompetitionPrint({ id, kind, teamId }: { id: string; kind: Print
             <span>{dateLong(c.created_at)}, started {clock(c.created_at)}</span>
             <span>Room <span className="code">{c.room_code}</span></span>
             <span>{c.teams.length} teams · {c.questions_played} of {c.question_total} questions</span>
+            <span>Scoring: {SCORING_MODE_LABEL[c.settings?.scoring_mode ?? "CLASSIC"]}</span>
           </div>
           <div className="meta small">
             <span>Printed {dateLong(printedAt.getTime())} {clock(printedAt.getTime())}</span>

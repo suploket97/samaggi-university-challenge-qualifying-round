@@ -79,6 +79,12 @@ Go to **Host console → Question bank**. There's no spreadsheet needed.
      Each part gets its own answer box on the phone, is marked on its own (typos and Thai handled the same way), and the points of the
      parts answered correctly are added up into one score for the question. Give a part its own points, or leave them blank to split
      the question's points evenly. The speed bonus only applies when every part is right; getting some right shows "PARTLY RIGHT".
+   - **True or false**: two big buttons on the phone. Tap the one that is correct. The labels can be changed (e.g. จริง / เท็จ, Yes / No, Fact / Myth).
+   - **Put in order**: write 2–10 items **in the correct order** (drag ⠿ to fix the order). Phones and the big screen show them shuffled;
+     players tap them in order, first to last. Points are shared by the items in the right place (3 of 4 = 75%), or choose
+     "Points only if everything is right".
+   - **Matching**: write 2–10 pairs, each row one correct pair (e.g. Japan → Tokyo). Phones show the right-hand side shuffled, and
+     players pick a match for each item. Points are shared by the correct matches, or all-or-nothing.
 3. Tick the correct choice(s), set the **time to answer** and click **Add question**.
 4. Drag the **⠿** handle to reorder questions (mouse or touch; or focus it and use the arrow keys), **Copy** to duplicate a question, and **Edit** to change it later. Choices and sub-question parts have the same ⠿ handle and a **Remove** button.
 
@@ -110,10 +116,12 @@ Download the template and use one row per question:
 | Column | What to put |
 |---|---|
 | `quiz_pack_id` / `pack_title` | Which pack. Leave blank to use the same pack as the row above. |
-| `type` | `MCQ_SINGLE`, `MCQ_MULTI`, `TEXT_INPUT` or `SUB_QUESTIONS_TEXT` (blank = the app works it out) |
+| `type` | `MCQ_SINGLE`, `MCQ_MULTI`, `TRUE_FALSE`, `TEXT_INPUT`, `SUB_QUESTIONS_TEXT`, `ORDERING` or `MATCHING` (blank = the app works it out; `true_false`/`tf`, `ordering`/`order` and `matching`/`match` also work) |
 | `question_text` | The question |
 | `choice_a` … `choice_z` | Options for multiple choice (up to 26 choices, A–Z) |
-| `correct_answers` | MCQ: letters, e.g. `B` or `A\|C`. Typed answers: every accepted answer separated by `\|`; the first is shown on stage. |
+| `correct_answers` | MCQ: letters, e.g. `B` or `A\|C`. Typed answers: every accepted answer separated by `\|`; the first is shown on stage. True/false: `True` or `False` (also `T`/`F`, `A`/`B`, `จริง`/`เท็จ`). Ordering and matching: leave blank. |
+| `choice_a` … for `ORDERING` | The items **in the correct order** (A first). |
+| `match_1_left`, `match_1_right` … `match_10_*` | Matching: each correct pair. |
 | `media_url` | Optional link to a picture, sound or video |
 | `sub_1_question`, `sub_1_answers`, `sub_1_points` … `sub_20_*` | Sub-questions: each part's question, accepted answers (separated by `\|`) and optional points. Set `type` to `SUB_QUESTIONS_TEXT` (or leave it blank). |
 | `time_limit_sec` | Optional, 5–600 |
@@ -132,18 +140,30 @@ many teams sent it, which teams, and how it was marked automatically ("Exact mat
 - Typed answers accepted only because of the typo allowance are labelled **typo accepted: check it** (e.g. "Austria" for "Australia").
 - Multiple choice: marking a choice right or wrong changes the answer key for that question (e.g. accept a second correct choice).
 - Sub-questions: each part is reviewed on its own.
+- Ordering and matching: identical answers are grouped. Part-right answers (½) keep their share of the points automatically;
+  **✔ Right** gives full points and **✘ Wrong** gives none.
 - Changes are allowed only before **Reveal answer**. The reveal button shows how many changes will be applied, and the big screen lists
   answers the host accepted as "Also accepted by the judges".
 - Every change is written to the **Competition log** at once (Timeline and full report), and each team's answer sheet says
   "Marked correct by the host during the review (automatic marking: …)".
 
 ## How scoring works
-- **Correct answer:** base points (100). Fast answers get a bonus: +20 within 5 seconds, +10 within 10 seconds. Only the server's clock counts.
+When you create a room, choose one of three scoring modes (fixed for that game, and saved in the competition log):
+
+| Mode | Right answer | Speed |
+|---|---|---|
+| **Classic** (default) | base points (100) | bonus +20 within 5 s, +10 within 10 s |
+| **Accuracy only** | base points, whenever it arrives before time is up | no bonus |
+| **Speed decay** | base points × a time factor: 100% for an instant answer, falling steadily to 50% at the buzzer (time added with +10s counts) | no separate bonus |
+
+Only the server's clock counts. Part marks (pick-all-that-apply, sub-questions, ordering, matching) are worked out first, then the mode is applied.
+
 - **Pick-all-that-apply:** each correct pick earns a share of the points and each wrong pick loses a share (never below 0), so selecting every option doesn't pay off. The speed bonus only applies to fully correct answers.
 - **Text answers:** capital letters, accents, punctuation, spacing and a leading "the/a/an" are ignored.
   Typos are forgiven by length: exact spelling up to 4 letters, 1 typo for 5–8 letters, 2 typos for 9 or more.
   Numbers (like years) must be exact.
-- **Ties** are decided by more correct answers, then less total time spent on correct answers.
+- **Ordering / matching:** the share of items in the right place, unless the question is set to all-or-nothing.
+- **Ties** (in every scoring mode) are decided by more correct answers, then less total time spent on correct answers.
   Teams still tied at the qualifying cut-off all go through.
 
 ## Anti-cheat

@@ -34,6 +34,8 @@ import type {
   Submission,
   Team,
 } from "./types";
+import { SCORING_MODES, isChoiceType, isSequenceType } from "./types";
+import { describeSequence, markSequence, publicSequence, sequenceKey, sequenceLength, toDisplayIds, toOwnIds } from "./sequence";
 import { GameError, assertCanApply, createInitialState, isAcceptingAnswers, transition } from "./state-machine";
 import type { ResolvedEvent } from "./state-machine";
 import { effectiveChoiceKey, rankTeams, scoreSubmission, subQuestionPoints } from "./scoring";
@@ -113,7 +115,11 @@ export class GameEngine {
       const code = Array.from({ length: 5 }, () =>
         ROOM_CODE_ALPHABET[Math.floor(Math.random() * ROOM_CODE_ALPHABET.length)],
       ).join("");
-      const state = createInitialState(code, this.clock.now(), settings);
+      if (settings.scoring_mode !== undefined && !SCORING_MODES.includes(settings.scoring_mode)) {
+        throw new GameError("BAD_REQUEST", "Unknown scoring mode");
+      }
+      // The seed shuffles ordering and matching items; it never leaves the server.
+      const state: RoomState = { ...createInitialState(code, this.clock.now(), settings), secret_seed: this.newId() };
       if (await this.store.createState(state)) return state;
     }
     throw new Error("Could not allocate a room code");
@@ -197,7 +203,7 @@ export class GameEngine {
           this.bank.getPack(state.quiz_pack_id!),
         ]);
         if (!q || !pack) throw new GameError("BAD_REQUEST", "Question or pack missing from bank");
-        const question = toPublicQuestion(q, index, state.question_ids.length, pack);
+        const question = toPublicQuestion(q, index, state.question_ids.length, pack, seedOf(state));
         if (cmd.time_limit_sec !== undefined) {
           const t = Math.round(Number(cmd.time_limit_sec));
           if (!Number.isFinite(t) || t < 5 || t > 600) throw new GameError("BAD_REQUEST", "Time must be between 5 and 600 seconds");
@@ -266,8 +272,12 @@ export class GameEngine {
     }
 
     const results: RevealPayload["results"] = {};
-    const distribution: Record<string, number> | null = q.type === "TEXT_INPUT" || q.type === "SUB_QUESTIONS_TEXT" ? null : {};
-    for (const c of q.choices ?? []) distribution![c.choice_id] = 0;
+    const distribution: Record<string, number> | null = isChoiceType(q.type) ? {} : null;
+    if (distribution) for (const c of q.choices ?? []) distribution[c.choice_id] = 0;
+    const timing = {
+      mode: state.settings.scoring_mode ?? "CLASSIC",
+      limit_ms: (state.question_ends_at ?? 0) - (state.question_started_at ?? 0),
+    };
     const basePoints = q.base_points ?? pack.default_base_points;
     const answers: AnswerRecord[] = [];
 
@@ -282,6 +292,7 @@ export class GameEngine {
         voided,
         { base_points: pack.default_base_points, speed_tiers: pack.speed_tiers },
         overrides,
+        timing,
       );
       results[team.team_id] = {
         correct: r.correct,
@@ -309,6 +320,7 @@ export class GameEngine {
         fraction: r.fraction,
         base_points: r.base_points,
         speed_bonus: r.speed_bonus,
+        ...(r.time_factor !== undefined ? { time_factor: r.time_factor } : {}),
         points: r.points,
         // Locked out by anti-cheat for this question (whether or not an answer had arrived).
         voided,
@@ -319,6 +331,7 @@ export class GameEngine {
 
     const isText = q.type === "TEXT_INPUT";
     const isSub = q.type === "SUB_QUESTIONS_TEXT";
+    const isSeq = isSequenceType(q.type);
     const applied = Object.values(overrides).sort((a, b) => a.at - b.at);
     // Answers the host accepted by hand, shown on the big screen with the answer.
     const hostAccepted = (part: number | null) =>
@@ -334,16 +347,35 @@ export class GameEngine {
           correct_teams: Object.values(results).filter((r) => r.sub_correct?.[i]).length,
         }))
       : null;
+    // Ordering / matching: the correct order (or pairs), with how many teams got each position right.
+    const seqN = isSeq ? sequenceLength(q) : 0;
+    const marked = isSeq
+      ? subs.filter((s) => (teams.find((t) => t.team_id === s.team_id)?.frozen_for_question ?? null) !== qIndex).map((s) => markSequence(seqN, s.answer).correct)
+      : [];
+    const sequence_reveal = isSeq
+      ? sequenceKey(seqN).map((id, i) => ({
+          text: q.type === "MATCHING" ? `${q.pairs![i].left} → ${q.pairs![i].right}` : q.choices![i].text,
+          ...(q.type === "ORDERING" && q.choices![i].media_url ? { media_url: q.choices![i].media_url } : {}),
+          correct_teams: marked.filter((m) => m[i]).length,
+        }))
+      : null;
     return {
       reveal: {
         question_index: qIndex,
         question_id: q.question_id,
         type: q.type,
-        correct_display: isText ? [q.correct_answers_array[0]] : isSub ? (sub_reveal ?? []).map((x) => x.answer) : effectiveChoiceKey(q, overrides),
+        correct_display: isText
+          ? [q.correct_answers_array[0]]
+          : isSub
+            ? (sub_reveal ?? []).map((x) => x.answer)
+            : isSeq
+              ? (sequence_reveal ?? []).map((x) => x.text)
+              : effectiveChoiceKey(q, overrides),
         accepted_aliases: isText ? q.correct_answers_array.slice(1) : [],
-        host_accepted: isText ? hostAccepted(null) : [],
+        host_accepted: isText ? hostAccepted(null) : isSeq ? applied.filter((o) => o.verdict === "CORRECT").map((o) => o.label) : [],
         review_changes: applied.length,
         sub_reveal,
+        sequence_reveal,
         explanation: q.explanation ?? null,
         results,
         answer_distribution: distribution,
@@ -398,8 +430,9 @@ export class GameEngine {
 
     const qIndex = state.current_question_index;
     const now = this.clock.now();
-    // Same as the automatic marking = no change needed.
-    const verdict = input.verdict === group.auto ? null : input.verdict;
+    // Same as the automatic marking = no change needed. (A part-right ordering or matching answer
+    // is not the same as "wrong": marking it wrong takes its partial points away.)
+    const verdict = input.verdict === group.auto && group.partial === undefined ? null : input.verdict;
     await this.store.setOverride(code, qIndex, group.key, verdict ? toOverride(group, verdict, now) : null);
 
     // If the reveal happened in the meantime, this change did not count: take it back and say so.
@@ -476,8 +509,11 @@ export class GameEngine {
     if (!isAcceptingAnswers(state, now)) return { ok: false, reason: "NOT_ACCEPTING" };
     if (team.frozen_for_question === state.current_question_index) return { ok: false, reason: "FROZEN" };
 
-    const cleaned = validateAnswerShape(state.current_question!, answer);
+    const q = state.current_question!;
+    let cleaned = validateAnswerShape(q, answer);
     if (!cleaned) return { ok: false, reason: "INVALID_ANSWER" };
+    // Ordering / matching: phones send display letters; store the question's own ids.
+    if (isSequenceType(q.type)) cleaned = toOwnIds(cleaned, q.choices?.length ?? 0, seedOf(state), q.question_id);
 
     const sub: Submission = { team_id: teamId, question_index: state.current_question_index, answer: cleaned, received_at: now };
     const stored = await this.store.putSubmissionIfAbsent(code, sub);
@@ -575,6 +611,12 @@ export class GameEngine {
             type: current.type,
             explanation: current.explanation ?? null,
             sub_questions: current.sub_questions ?? null,
+            // Ordering / matching: the answer in words, for the host's crib sheet.
+            sequence: isSequenceType(current.type)
+              ? current.type === "MATCHING"
+                ? (current.pairs ?? []).map((p) => `${p.left} → ${p.right}`)
+                : (current.choices ?? []).map((c) => c.text || "(picture)")
+              : null,
           }
         : null,
       teams: teams
@@ -587,6 +629,8 @@ export class GameEngine {
           rank: rankOf.get(t.team_id)?.rank ?? null,
           answered: answeredBy.has(t.team_id),
           answer: answeredBy.get(t.team_id)?.answer ?? null,
+          // Ordering / matching: the answer in words (the ids alone mean little to the host).
+          answer_text: current && isSequenceType(current.type) && answeredBy.has(t.team_id) ? describeSequence(current, answeredBy.get(t.team_id)!.answer) : null,
           flags: t.flags,
           frozen_now: t.frozen_for_question === state.current_question_index && state.current_question_index >= 0,
         })),
@@ -619,7 +663,9 @@ export class GameEngine {
         team_id: team.team_id,
         name: team.name,
         has_submitted: !!sub,
-        my_answer: sub?.answer ?? null,
+        my_answer: sub && state.current_question && isSequenceType(state.current_question.type)
+          ? toDisplayIds(sub.answer, state.current_question.choices?.length ?? 0, seedOf(state), state.current_question.question_id)
+          : sub?.answer ?? null,
         frozen: team.frozen_for_question === state.current_question_index,
       },
     };
@@ -630,7 +676,13 @@ export class GameEngine {
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function toPublicQuestion(q: BankQuestion, index: number, total: number, pack: PackInfo): PublicQuestion {
+/** The room's secret seed (rooms made before it existed fall back to something stable). */
+export function seedOf(state: Pick<RoomState, "secret_seed" | "room_code" | "created_at">): string {
+  return state.secret_seed ?? `${state.room_code}-${state.created_at}`;
+}
+
+export function toPublicQuestion(q: BankQuestion, index: number, total: number, pack: PackInfo, seed = ""): PublicQuestion {
+  const seq = isSequenceType(q.type) ? publicSequence(q, seed) : null;
   return {
     question_id: q.question_id,
     index,
@@ -642,7 +694,9 @@ export function toPublicQuestion(q: BankQuestion, index: number, total: number, 
     // Pictures go to phones by default (people at the back can't see the projector).
     // Audio and video stay on the stage unless asked for.
     show_media_on_player: q.show_media_on_player ?? (q.media_type === "image" || (!!q.media_url && !q.media_type)),
-    choices: q.choices ? q.choices.map((c) => ({ ...c })) : null,
+    // Ordering / matching: shuffled, with display letters. Everything else: as written.
+    choices: seq ? seq.choices : q.choices ? q.choices.map((c) => ({ ...c })) : null,
+    match_left: seq ? seq.match_left : null,
     // Parts go to the screens without their answers.
     sub_questions:
       q.type === "SUB_QUESTIONS_TEXT"
@@ -658,7 +712,8 @@ export function toPublicQuestion(q: BankQuestion, index: number, total: number, 
 }
 
 export function toPublicSnapshot(state: RoomState, now: number): PublicSnapshot {
-  const { question_ids, ...rest } = state;
+  const { question_ids, secret_seed, ...rest } = state;
+  void secret_seed; // server-only
   return { ...rest, total_questions: question_ids.length, server_now: now };
 }
 
@@ -679,9 +734,20 @@ export function validateAnswerShape(q: PublicQuestion, answer: unknown): string[
     return text.length > 0 && text.length <= 200 ? [text] : null;
   }
   const valid = new Set((q.choices ?? []).map((c) => c.choice_id));
+  if (q.type === "ORDERING") {
+    // Every item exactly once, in the team's order.
+    if (answer.length !== valid.size || new Set(answer).size !== answer.length || !answer.every((a) => valid.has(a as never))) return null;
+    return [...answer];
+  }
+  if (q.type === "MATCHING") {
+    // One entry per left-hand item: a display letter, or "" for blank. Not all blank.
+    const n = q.match_left?.length ?? 0;
+    if (answer.length !== n || !answer.every((a) => a === "" || valid.has(a as never)) || answer.every((a) => a === "")) return null;
+    return [...answer];
+  }
   const picked = [...new Set(answer)];
   if (!picked.every((a) => valid.has(a as never))) return null;
-  if (q.type === "MCQ_SINGLE" && picked.length !== 1) return null;
+  if ((q.type === "MCQ_SINGLE" || q.type === "TRUE_FALSE") && picked.length !== 1) return null;
   if (q.type === "MCQ_MULTI" && picked.length < 1) return null;
   return picked.sort();
 }

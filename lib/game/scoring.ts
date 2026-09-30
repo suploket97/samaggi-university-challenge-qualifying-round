@@ -6,10 +6,13 @@ import type {
   BankQuestion,
   QuestionResult,
   ScoreRow,
+  ScoringMode,
   SpeedTier,
   Submission,
   Team,
 } from "./types";
+import { DECAY_FLOOR } from "./types";
+import { markSequence, sequenceLength, sequenceReviewKey } from "./sequence";
 
 export const DEFAULT_BASE_POINTS = 100;
 export const DEFAULT_SPEED_TIERS: SpeedTier[] = [
@@ -204,6 +207,7 @@ export function speedBonus(elapsedMs: number, tiers: SpeedTier[]): number {
 export function answerFraction(q: BankQuestion, answer: string[], overrides?: Overrides): number {
   switch (q.type) {
     case "MCQ_SINGLE":
+    case "TRUE_FALSE":
       // The host may accept a second choice during the review, so check against the whole key.
       return answer.length === 1 && effectiveChoiceKey(q, overrides).includes(answer[0]) ? 1 : 0;
 
@@ -231,7 +235,46 @@ export function answerFraction(q: BankQuestion, answer: string[], overrides?: Ov
       const { earned, total } = markSubQuestions(q, answer, DEFAULT_BASE_POINTS, overrides);
       return total > 0 ? earned / total : 0;
     }
+
+    case "ORDERING":
+    case "MATCHING":
+      return sequenceFraction(q, answer, overrides);
   }
+}
+
+/**
+ * Ordering / matching: the share of items in the right place (3 of 4 = 0.75),
+ * or all-or-nothing if the question says so. The host can mark a whole answer
+ * right (full points) or wrong (no points) during the review.
+ */
+export function sequenceFraction(q: BankQuestion, answer: string[], overrides?: Overrides): number {
+  const n = sequenceLength(q);
+  if (n === 0 || answer.every((a) => !a)) return 0;
+  const o = overrides?.[sequenceReviewKey(answer)];
+  if (o) return o.verdict === "CORRECT" ? 1 : 0;
+  const { hits } = markSequence(n, answer);
+  if (hits === n) return 1;
+  if ((q.multi_scoring ?? "PARTIAL") === "ALL_OR_NOTHING") return 0;
+  return hits / n;
+}
+
+/**
+ * DECAY scoring: the share of the points kept for an answer that arrived
+ * `elapsed` ms into a question lasting `limit` ms. Straight line from 1 (at
+ * once) to DECAY_FLOOR (at the buzzer); answers in the grace period after the
+ * buzzer get the floor. Rounded to 3 decimals so the log shows what was used.
+ */
+export function decayFactor(elapsedMs: number, limitMs: number): number {
+  if (!(limitMs > 0)) return 1;
+  const t = Math.min(1, Math.max(0, elapsedMs / limitMs));
+  return Math.round((1 - (1 - DECAY_FLOOR) * t) * 1000) / 1000;
+}
+
+/** How points are worked out for the room: the mode chosen at creation and the question's actual length. */
+export interface Timing {
+  mode?: ScoringMode;
+  /** From the moment the question opened to when it was due to close (including any time added). */
+  limit_ms?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -275,9 +318,11 @@ export function scoreSubmission(
   voided: boolean,
   packDefaults: { base_points?: number; speed_tiers?: SpeedTier[] } = {},
   overrides?: Overrides,
+  timing: Timing = {},
 ): QuestionResult {
   const base = q.base_points ?? packDefaults.base_points ?? DEFAULT_BASE_POINTS;
-  const tiers = q.speed_tiers ?? packDefaults.speed_tiers ?? DEFAULT_SPEED_TIERS;
+  const mode = timing.mode ?? "CLASSIC";
+  const tiers = mode === "CLASSIC" ? q.speed_tiers ?? packDefaults.speed_tiers ?? DEFAULT_SPEED_TIERS : [];
 
   const isSub = q.type === "SUB_QUESTIONS_TEXT";
 
@@ -297,19 +342,24 @@ export function scoreSubmission(
   }
 
   const elapsed = Math.max(0, sub.received_at - questionStartedAt);
+  // DECAY: every point earned shrinks with time. Other modes keep full points.
+  const factor = mode === "DECAY" ? decayFactor(elapsed, timing.limit_ms ?? 0) : 1;
+  const decay = (pts: number) => (mode === "DECAY" ? { pts: Math.round(pts * factor), extra: { time_factor: factor } } : { pts, extra: {} });
 
   if (isSub) {
     // One total for the question: the sum of the parts answered correctly.
     const m = markSubQuestions(q, sub.answer, base, overrides);
     const allRight = m.correct.length > 0 && m.correct.every(Boolean);
     const bonus = allRight ? speedBonus(elapsed, tiers) : 0; // bonus only when every part is right
+    const d = decay(m.earned);
     return {
       team_id,
       correct: allRight,
       fraction: m.total > 0 ? m.earned / m.total : 0,
-      base_points: m.earned,
+      base_points: d.pts,
       speed_bonus: bonus,
-      points: m.earned + bonus,
+      ...d.extra,
+      points: d.pts + bonus,
       answered: true,
       elapsed_ms: elapsed,
       voided_by_anti_cheat: false,
@@ -318,16 +368,17 @@ export function scoreSubmission(
   }
   const fraction = answerFraction(q, sub.answer, overrides);
   const correct = fraction === 1;
-  const basePts = Math.round(base * fraction);
+  const d = decay(Math.round(base * fraction));
   const bonus = correct ? speedBonus(elapsed, tiers) : 0; // bonus only for full marks
 
   return {
     team_id,
     correct,
     fraction,
-    base_points: basePts,
+    base_points: d.pts,
     speed_bonus: bonus,
-    points: basePts + bonus,
+    ...d.extra,
+    points: d.pts + bonus,
     answered: true,
     elapsed_ms: elapsed,
     voided_by_anti_cheat: false,

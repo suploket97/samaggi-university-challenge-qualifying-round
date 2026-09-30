@@ -126,6 +126,9 @@ export class SupabaseRecorder implements GameRecorder {
                 base_points: question?.base_points ?? pack?.default_base_points ?? 100,
                 speed_tiers: question?.speed_tiers ?? pack?.speed_tiers ?? null,
                 time_override: command.time_limit_sec ?? null,
+                scoring_mode: next.settings.scoring_mode ?? "CLASSIC",
+                // Ordering / matching: the shuffled order phones showed (A = first shown).
+                ...(cq.type === "ORDERING" || cq.type === "MATCHING" ? { shown_order: (cq.choices ?? []).map((c) => `${c.choice_id}. ${c.text}`) } : {}),
               },
               started_at: iso(next.question_started_at),
               planned_end_at: iso(next.question_ends_at),

@@ -49,7 +49,7 @@ export interface CompetitionSummary {
 export interface CompetitionQuestion {
   question_index: number;
   question: BankQuestion;
-  effective: { time_limit_sec: number; base_points: number; speed_tiers: { within_sec: number; bonus: number }[] | null; time_override: number | null };
+  effective: { time_limit_sec: number; base_points: number; speed_tiers: { within_sec: number; bonus: number }[] | null; time_override: number | null; scoring_mode?: "CLASSIC" | "ACCURACY" | "DECAY"; shown_order?: string[] };
   started_at: string | null;
   planned_end_at: string | null;
   closed_at: string | null;

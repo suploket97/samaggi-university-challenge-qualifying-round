@@ -15,7 +15,8 @@ export function ReviewPanel({ code, review, onChange }: { code: string; review: 
   const [filter, setFilter] = useState<"all" | "wrong" | "right" | "changed">("all");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const isChoice = review.type === "MCQ_SINGLE" || review.type === "MCQ_MULTI";
+  const isChoice = review.type === "MCQ_SINGLE" || review.type === "MCQ_MULTI" || review.type === "TRUE_FALSE";
+  const isSequence = review.type === "ORDERING" || review.type === "MATCHING";
 
   async function mark(g: ReviewGroup, verdict: Verdict | null) {
     setBusy(g.key);
@@ -55,6 +56,8 @@ export function ReviewPanel({ code, review, onChange }: { code: string; review: 
       <p className="mt-1 text-sm text-muted">
         {isChoice
           ? "Mark a choice right or wrong to change the answer key for this question. It applies to every team that picked it."
+          : isSequence
+          ? "Identical answers are grouped. Part-right answers get their share of the points automatically; ✔ Right gives full points, ✘ Wrong gives none."
           : "Identical answers are grouped. Marking a group applies to every team that sent it, including teams that answer later."}{" "}
         Every change is saved in the competition log.
       </p>
@@ -104,17 +107,22 @@ export function ReviewPanel({ code, review, onChange }: { code: string; review: 
 
 function Row({ g, busy, disabled, onMark }: { g: ReviewGroup; busy: boolean; disabled: boolean; onMark: (v: Verdict | null) => void }) {
   const right = g.final === "CORRECT";
+  // Ordering / matching: part-right, keeping its share of the points (until the host decides otherwise).
+  const partial = !right && g.partial !== undefined && !g.override;
   return (
     <li
       className={cx(
         "flex flex-wrap items-center gap-3 rounded-xl border p-3",
-        right ? "border-good/40 bg-good/5" : "border-line bg-ink/40",
+        right ? "border-good/40 bg-good/5" : partial ? "border-partial/40 bg-partial/5" : "border-line bg-ink/40",
         g.override && "ring-1 ring-gold/60",
         g.count === 0 && "opacity-60",
       )}
     >
-      <span className={cx("w-6 text-center text-lg font-bold", right ? "text-good" : "text-bad")} aria-label={right ? "Counts as correct" : "Counts as wrong"}>
-        {right ? "✔" : "✘"}
+      <span
+        className={cx("w-6 text-center text-lg font-bold", right ? "text-good" : partial ? "text-partial" : "text-bad")}
+        aria-label={right ? "Counts as correct" : partial ? "Counts as partly right" : "Counts as wrong"}
+      >
+        {right ? "✔" : partial ? "½" : "✘"}
       </span>
       <div className="min-w-0 flex-1 basis-56">
         <p className="break-words font-semibold">
@@ -123,7 +131,7 @@ function Row({ g, busy, disabled, onMark }: { g: ReviewGroup; busy: boolean; dis
           {g.override ? <span className="ml-2 rounded bg-gold/15 px-1.5 py-0.5 text-xs font-normal text-gold">changed by you</span> : null}
         </p>
         {g.variants.length ? <p className="break-words text-xs text-muted">Also typed as: {g.variants.join(" · ")}</p> : null}
-        <p className="text-xs text-muted">{g.override ? `Automatic marking: ${g.auto === "CORRECT" ? "correct" : "wrong"} (${g.auto_note})` : g.auto_note}</p>
+        <p className="text-xs text-muted">{g.override ? `Automatic marking: ${g.auto === "CORRECT" ? "correct" : g.partial !== undefined ? "partly right" : "wrong"} (${g.auto_note})` : g.auto_note}</p>
         {g.team_names.length ? <p className="truncate text-xs text-muted" title={g.team_names.join(", ")}>{g.team_names.join(", ")}</p> : null}
       </div>
       <div className="ml-auto flex shrink-0 gap-1.5">
@@ -137,9 +145,13 @@ function Row({ g, busy, disabled, onMark }: { g: ReviewGroup; busy: boolean; dis
         </button>
         <button
           type="button"
-          disabled={disabled || !right}
+          disabled={disabled || (!right && !partial)}
           onClick={() => onMark("WRONG")}
-          className={cx("h-9 rounded-lg border px-3 text-sm font-semibold", !right ? "border-bad bg-bad/20 text-bad" : "border-line text-muted hover:border-bad hover:text-bad", disabled && right && "opacity-50")}
+          className={cx(
+            "h-9 rounded-lg border px-3 text-sm font-semibold",
+            !right && !partial ? "border-bad bg-bad/20 text-bad" : "border-line text-muted hover:border-bad hover:text-bad",
+            disabled && (right || partial) && "opacity-50",
+          )}
         >
           ✘ Wrong
         </button>

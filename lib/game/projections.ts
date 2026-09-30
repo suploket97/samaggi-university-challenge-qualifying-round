@@ -34,6 +34,10 @@ export type StageView =
       correct_team_count: number;
       /** SUB_QUESTIONS_TEXT: each part's answer and how many teams got it. */
       sub_reveal: RevealPayload["sub_reveal"];
+      /** ORDERING / MATCHING: the correct order (or pairs) and how many teams got each one. */
+      sequence_reveal: RevealPayload["sequence_reveal"];
+      /** Teams that answered (not locked out), for "x of y" on the stage. */
+      answered_team_count: number;
     }
   | { screen: "LEADERBOARD"; rows: ScoreRow[]; after_question: number; total: number }
   | { screen: "QUALIFICATION"; qualified: ScoreRow[]; eliminated: ScoreRow[]; qualify_count: number }
@@ -61,6 +65,8 @@ export function stageView(s: PublicSnapshot, serverNow: number): StageView {
         answer_distribution: r.answer_distribution,
         correct_team_count: Object.values(r.results).filter((x) => x.correct).length,
         sub_reveal: r.sub_reveal ?? null,
+        sequence_reveal: r.sequence_reveal ?? null,
+        answered_team_count: Object.values(r.results).filter((x) => x.answered && !x.voided_by_anti_cheat).length,
       };
     }
     case "LEADERBOARD":
@@ -95,7 +101,7 @@ export type PlayerView =
   | {
       screen: "ANSWER";
       question: PublicQuestion;
-      controls: "SINGLE_TAP" | "MULTI_SELECT_SUBMIT" | "TEXT_INPUT" | "SUB_TEXT_FORM";
+      controls: "SINGLE_TAP" | "TRUE_FALSE" | "MULTI_SELECT_SUBMIT" | "TEXT_INPUT" | "SUB_TEXT_FORM" | "ORDER" | "MATCH";
       remaining_ms: number;
     }
   | { screen: "LOCKED_WAITING"; reason: "SUBMITTED" | "TIME_UP" | "FROZEN" }
@@ -103,6 +109,8 @@ export type PlayerView =
       screen: "RESULT";
       outcome: "CORRECT" | "PARTIAL" | "INCORRECT" | "NO_ANSWER" | "VOIDED";
       points: number;
+      /** Share of the question's points earned before any time adjustment (0..1). */
+      fraction: number;
       rank: number | null;
       score: number;
       team_count: number;
@@ -112,6 +120,16 @@ export type PlayerView =
   | { screen: "STANDING"; rank: number | null; score: number; previous_score: number | null; team_count: number; movement: number | null }
   | { screen: "QUALIFICATION"; passed: boolean; rank: number | null }
   | { screen: "ENDED"; rank: number | null; score: number };
+
+const CONTROLS: Record<PublicQuestion["type"], Extract<PlayerView, { screen: "ANSWER" }>["controls"]> = {
+  MCQ_SINGLE: "SINGLE_TAP",
+  TRUE_FALSE: "TRUE_FALSE",
+  MCQ_MULTI: "MULTI_SELECT_SUBMIT",
+  TEXT_INPUT: "TEXT_INPUT",
+  SUB_QUESTIONS_TEXT: "SUB_TEXT_FORM",
+  ORDERING: "ORDER",
+  MATCHING: "MATCH",
+};
 
 export function playerView(s: PublicSnapshot, me: PlayerContext, serverNow: number): PlayerView {
   const row = s.leaderboard.find((r) => r.team_id === me.team_id);
@@ -131,8 +149,7 @@ export function playerView(s: PublicSnapshot, me: PlayerContext, serverNow: numb
       return {
         screen: "ANSWER",
         question: q,
-        controls:
-          q.type === "MCQ_SINGLE" ? "SINGLE_TAP" : q.type === "MCQ_MULTI" ? "MULTI_SELECT_SUBMIT" : q.type === "SUB_QUESTIONS_TEXT" ? "SUB_TEXT_FORM" : "TEXT_INPUT",
+        controls: CONTROLS[q.type],
         remaining_ms: remaining,
       };
     }
@@ -148,6 +165,7 @@ export function playerView(s: PublicSnapshot, me: PlayerContext, serverNow: numb
         screen: "RESULT",
         outcome: outcomeFor(s.reveal!, me.team_id),
         points: s.reveal!.results[me.team_id]?.points ?? 0,
+        fraction: s.reveal!.results[me.team_id]?.fraction ?? 0,
         sub_correct: s.reveal!.results[me.team_id]?.sub_correct ?? (s.reveal!.sub_reveal ? s.reveal!.sub_reveal.map(() => false) : null),
         rank: row?.rank ?? null,
         score: row?.score ?? 0,

@@ -214,7 +214,7 @@ export function FitText({
   maxHeight?: string;
   fill?: boolean;
   className?: string;
-  as?: "div" | "h1" | "ol";
+  as?: "div" | "h1" | "ol" | "ul";
   /** Refit when this changes. Pass a string (e.g. the text), not an object that is rebuilt each render. */
   watch?: string;
 }) {

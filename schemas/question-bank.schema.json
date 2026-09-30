@@ -175,8 +175,11 @@
           "enum": [
             "MCQ_SINGLE",
             "MCQ_MULTI",
+            "TRUE_FALSE",
             "TEXT_INPUT",
-            "SUB_QUESTIONS_TEXT"
+            "SUB_QUESTIONS_TEXT",
+            "ORDERING",
+            "MATCHING"
           ]
         },
         "question_text": {
@@ -208,7 +211,7 @@
           "items": {
             "$ref": "#/$defs/Choice"
           },
-          "description": "Required for MCQ_SINGLE / MCQ_MULTI (2–26 choices, lettered A–Z). Must be absent for TEXT_INPUT."
+          "description": "MCQ_SINGLE / MCQ_MULTI: 2–26 choices, lettered A–Z. TRUE_FALSE: exactly 2, A = true and B = false (labels can be changed). ORDERING: 2–10 items written in the CORRECT order (phones get them shuffled). Must be absent for TEXT_INPUT, SUB_QUESTIONS_TEXT and MATCHING."
         },
         "correct_answers_array": {
           "type": "array",
@@ -219,7 +222,7 @@
             "minLength": 1,
             "maxLength": 200
           },
-          "description": "MCQ: the correct choice letters A–Z (e.g. [\"B\"] or [\"A\",\"C\"]). TEXT_INPUT: accepted answers; the FIRST entry is the canonical answer shown on stage, the rest are aliases (e.g. [\"Leonardo da Vinci\", \"da Vinci\", \"Leonardo\"]). SUB_QUESTIONS_TEXT: leave empty; each part has its own answers."
+          "description": "MCQ: the correct choice letters A–Z (e.g. [\"B\"] or [\"A\",\"C\"]). TEXT_INPUT: accepted answers; the FIRST entry is the canonical answer shown on stage, the rest are aliases (e.g. [\"Leonardo da Vinci\", \"da Vinci\", \"Leonardo\"]). SUB_QUESTIONS_TEXT: leave empty; each part has its own answers. TRUE_FALSE: [\"A\"] for true or [\"B\"] for false. ORDERING / MATCHING: optional; the key is always the written order (filled in automatically as A, B, C…)."
         },
         "text_matching": {
           "type": "object",
@@ -250,7 +253,7 @@
             "ALL_OR_NOTHING"
           ],
           "default": "PARTIAL",
-          "description": "MCQ_MULTI only. PARTIAL: each correct pick earns 1/k of base, each wrong pick costs 1/k, floored at 0. Speed bonus only for a fully correct answer."
+          "description": "MCQ_MULTI, ORDERING and MATCHING. PARTIAL (default): MCQ_MULTI — each correct pick earns 1/k of base, each wrong pick costs 1/k, floored at 0; ORDERING / MATCHING — the share of items in the right place. ALL_OR_NOTHING: only a fully correct answer scores. Speed bonus only for a fully correct answer."
         },
         "time_limit_sec": {
           "type": "integer",
@@ -292,6 +295,15 @@
             "$ref": "#/$defs/SubQuestion"
           },
           "description": "SUB_QUESTIONS_TEXT only: the parts. The question's score is the sum of the parts answered correctly."
+        },
+        "pairs": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/MatchPair"
+          },
+          "description": "MATCHING only: each left goes with its own right. Phones get the right-hand side shuffled."
         }
       },
       "allOf": [
@@ -310,7 +322,8 @@
               ]
             },
             "properties": {
-              "multi_scoring": false
+              "multi_scoring": false,
+              "pairs": false
             }
           }
         },
@@ -320,7 +333,8 @@
               "type": {
                 "enum": [
                   "MCQ_SINGLE",
-                  "MCQ_MULTI"
+                  "MCQ_MULTI",
+                  "TRUE_FALSE"
                 ]
               }
             }
@@ -339,7 +353,9 @@
                   "pattern": "^[A-Z]$"
                 }
               },
-              "text_matching": false
+              "text_matching": false,
+              "pairs": false,
+              "sub_questions": false
             }
           }
         },
@@ -347,7 +363,10 @@
           "if": {
             "properties": {
               "type": {
-                "const": "MCQ_SINGLE"
+                "enum": [
+                  "MCQ_SINGLE",
+                  "TRUE_FALSE"
+                ]
               }
             }
           },
@@ -384,6 +403,7 @@
                 "enum": [
                   "MCQ_SINGLE",
                   "MCQ_MULTI",
+                  "TRUE_FALSE",
                   "TEXT_INPUT"
                 ]
               }
@@ -422,6 +442,80 @@
               "multi_scoring": false,
               "correct_answers_array": {
                 "maxItems": 0
+              },
+              "pairs": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "TRUE_FALSE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "choices": {
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ORDERING"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "choices"
+            ],
+            "properties": {
+              "choices": {
+                "minItems": 2,
+                "maxItems": 10
+              },
+              "text_matching": false,
+              "sub_questions": false,
+              "pairs": false,
+              "correct_answers_array": {
+                "items": {
+                  "pattern": "^[A-Z]$"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "MATCHING"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "pairs"
+            ],
+            "not": {
+              "required": [
+                "choices"
+              ]
+            },
+            "properties": {
+              "text_matching": false,
+              "sub_questions": false,
+              "correct_answers_array": {
+                "items": {
+                  "pattern": "^[A-Z]$"
+                }
               }
             }
           }
@@ -464,6 +558,27 @@
           "minimum": 0,
           "maximum": 1000,
           "description": "Points for this part. Default: the question's base points split evenly."
+        }
+      }
+    },
+    "MatchPair": {
+      "type": "object",
+      "required": [
+        "left",
+        "right"
+      ],
+      "additionalProperties": false,
+      "description": "One MATCHING pair.",
+      "properties": {
+        "left": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "right": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
         }
       }
     }
@@ -594,6 +709,75 @@
             }
           ],
           "time_limit_sec": 60
+        },
+        {
+          "question_id": "fn1-005",
+          "quiz_pack_id": "friday-night-1",
+          "type": "TRUE_FALSE",
+          "question_text": "The Great Wall of China is visible from the Moon with the naked eye.",
+          "choices": [
+            {
+              "choice_id": "A",
+              "text": "True"
+            },
+            {
+              "choice_id": "B",
+              "text": "False"
+            }
+          ],
+          "correct_answers_array": [
+            "B"
+          ]
+        },
+        {
+          "question_id": "fn1-006",
+          "quiz_pack_id": "friday-night-1",
+          "type": "ORDERING",
+          "question_text": "Put these in order, earliest first.",
+          "choices": [
+            {
+              "choice_id": "A",
+              "text": "Sukhothai Kingdom founded"
+            },
+            {
+              "choice_id": "B",
+              "text": "Ayutthaya founded"
+            },
+            {
+              "choice_id": "C",
+              "text": "Bangkok becomes the capital"
+            }
+          ],
+          "correct_answers_array": [
+            "A",
+            "B",
+            "C"
+          ]
+        },
+        {
+          "question_id": "fn1-007",
+          "quiz_pack_id": "friday-night-1",
+          "type": "MATCHING",
+          "question_text": "Match each country to its capital.",
+          "pairs": [
+            {
+              "left": "Japan",
+              "right": "Tokyo"
+            },
+            {
+              "left": "Australia",
+              "right": "Canberra"
+            },
+            {
+              "left": "Canada",
+              "right": "Ottawa"
+            }
+          ],
+          "correct_answers_array": [
+            "A",
+            "B",
+            "C"
+          ]
         }
       ]
     }

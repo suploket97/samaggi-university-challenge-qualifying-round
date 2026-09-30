@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import type { BankQuestion } from "@/lib/game/types";
+import { QUESTION_TYPE_LABEL, type BankQuestion } from "@/lib/game/types";
 import type { ImportDoc, ImportIssue } from "@/lib/bank/types";
 import { normalizeJsonImport, rowsToImport, type Row } from "@/lib/bank/rows";
 import { api, ApiError } from "@/lib/client/api";
@@ -21,7 +21,7 @@ interface PackItem {
   updated_at: string;
 }
 
-const TYPE_LABEL: Record<string, string> = { MCQ_SINGLE: "One answer", MCQ_MULTI: "Several answers", TEXT_INPUT: "Typed answer", SUB_QUESTIONS_TEXT: "Sub-questions" };
+const TYPE_LABEL: Record<string, string> = QUESTION_TYPE_LABEL;
 
 export function BankManager() {
   const [packs, setPacks] = useState<PackItem[] | null>(null);
@@ -283,7 +283,11 @@ function PackEditor({ pack, onChanged }: { pack: PackItem; onChanged: () => void
                       ⏱ {q.time_limit_sec ?? pack.default_time_limit_sec}s
                     </span>
                     {q.base_points && q.base_points !== 100 ? <span className="rounded bg-white/5 px-1.5 py-0.5 text-muted">{q.base_points} pts</span> : null}
-                    {q.choices ? (
+                    {q.type === "ORDERING" ? (
+                      <span className="text-good">Order: {(q.choices ?? []).map((c, j) => `${j + 1}. ${c.text || "🖼"}`).join("  ")}</span>
+                    ) : q.type === "MATCHING" ? (
+                      <span className="text-good">{(q.pairs ?? []).map((p) => `${p.left} → ${p.right}`).join(" · ")}</span>
+                    ) : q.choices ? (
                       q.choices.map((c) => (
                         <span key={c.choice_id} style={choiceTileStyle(c.choice_id, 0.3)} className={cx("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-white", !q.correct_answers_array.includes(c.choice_id) && "opacity-40")}>
                           <b>{c.choice_id}</b> {c.text || (c.media_url ? "🖼" : "")}

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/client/api";
 import { usePoll } from "@/lib/client/hooks";
 import { Button, Card, ErrorNote, Field, Spinner, cx, inputClass } from "@/components/ui";
+import type { ScoringMode } from "@/lib/game/types";
 import { AdminShell } from "./AdminShell";
 import { PasswordCard } from "./PasswordCard";
 
@@ -20,6 +21,12 @@ interface RoomRow {
   quiz_pack_id: string | null;
 }
 
+const SCORING_CHOICES: { value: ScoringMode; title: string; detail: string }[] = [
+  { value: "CLASSIC", title: "Classic (points + speed bonus)", detail: "Full points for a right answer, plus a speed bonus (normally +20 within 5 s, +10 within 10 s)." },
+  { value: "ACCURACY", title: "Accuracy only", detail: "Full points for a right answer whenever it arrives before time is up. No speed bonus." },
+  { value: "DECAY", title: "Speed decay", detail: "Points shrink steadily: 100% for an instant answer down to 50% at the buzzer." },
+];
+
 export function AdminHome() {
   const router = useRouter();
   const [health, setHealth] = useState<Health | null>(null);
@@ -27,6 +34,7 @@ export function AdminHome() {
   const [policy, setPolicy] = useState("VOID_CURRENT_ANSWER");
   const [focusSec, setFocusSec] = useState(3);
   const [maxTeams, setMaxTeams] = useState(200);
+  const [scoring, setScoring] = useState<ScoringMode>("CLASSIC");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,7 +48,7 @@ export function AdminHome() {
     try {
       const r = await api<{ room_code: string }>("/api/admin/rooms", {
         method: "POST",
-        json: { anti_cheat_policy: policy, focus_violation_sec: focusSec, max_teams: maxTeams },
+        json: { anti_cheat_policy: policy, focus_violation_sec: focusSec, max_teams: maxTeams, scoring_mode: scoring },
       });
       router.push(`/admin/room/${r.room_code}`);
     } catch (e) {
@@ -78,6 +86,27 @@ export function AdminHome() {
         <Card className="p-5">
           <h2 className="font-headline text-xl font-bold">New room</h2>
           <div className="mt-4 space-y-4">
+            <fieldset>
+              <legend className="mb-1.5 text-sm font-semibold">Scoring</legend>
+              <div className="space-y-2">
+                {SCORING_CHOICES.map((o) => (
+                  <label
+                    key={o.value}
+                    className={cx(
+                      "flex cursor-pointer gap-3 rounded-xl border p-3",
+                      scoring === o.value ? "border-gold bg-gold/10" : "border-line hover:border-muted",
+                    )}
+                  >
+                    <input type="radio" name="scoring" className="mt-1 accent-gold" checked={scoring === o.value} onChange={() => setScoring(o.value)} />
+                    <span>
+                      <span className="block font-semibold">{o.title}</span>
+                      <span className="block text-xs text-muted">{o.detail}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <p className="mt-1.5 text-xs text-muted">Fixed for the whole game once the room is created. Equal scores are still split by total time on correct answers.</p>
+            </fieldset>
             <Field label="If a player leaves the quiz screen" hint="Page Visibility tracking while a question is open.">
               <select className={inputClass} value={policy} onChange={(e) => setPolicy(e.target.value)}>
                 <option value="VOID_CURRENT_ANSWER">Void their answer for that question</option>

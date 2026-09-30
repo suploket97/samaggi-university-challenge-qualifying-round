@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/client/api";
-import type { BankQuestion } from "@/lib/game/types";
+import { CHOICE_LETTERS, QUESTION_TYPE_LABEL, type BankQuestion } from "@/lib/game/types";
+import { displayOrder } from "@/lib/game/sequence";
 import { subQuestionPoints } from "@/lib/game/scoring";
 import { dateLong, clock } from "@/lib/competition/format";
 
@@ -13,7 +14,7 @@ interface PackRow {
   default_base_points?: number;
 }
 
-const TYPE_LABEL: Record<string, string> = { MCQ_SINGLE: "One answer", MCQ_MULTI: "Several answers", TEXT_INPUT: "Typed answer", SUB_QUESTIONS_TEXT: "Sub-questions" };
+const TYPE_LABEL: Record<string, string> = QUESTION_TYPE_LABEL;
 
 /** Printable question sheet: with answers for the host and judges, or questions only as a paper backup. */
 export function QuestionSheetPrint({ packId, answers }: { packId: string; answers: boolean }) {
@@ -75,7 +76,36 @@ export function QuestionSheetPrint({ packId, answers }: { packId: string; answer
                 ) : q.media_url ? (
                   <div className="small muted">[{q.media_type} clip]</div>
                 ) : null}
-                {q.choices?.length ? (
+                {q.type === "ORDERING" ? (
+                  answers ? (
+                    <ol className="ans" style={{ margin: "6px 0 0", paddingLeft: 22 }}>
+                      {(q.choices ?? []).map((c) => <li key={c.choice_id}>{c.text || "(picture)"}</li>)}
+                    </ol>
+                  ) : (
+                    // Shuffled for the paper copy (never in the correct order), with a box to number each item.
+                    <div style={{ marginTop: 6 }}>
+                      {displayOrder(q.choices?.length ?? 0, "print", q.question_id).map((own) => (
+                        <div key={own}>☐&nbsp; {q.choices![own].text || "(picture)"}</div>
+                      ))}
+                      <div className="small muted">Number the boxes 1, 2, 3… in order.</div>
+                    </div>
+                  )
+                ) : q.type === "MATCHING" ? (
+                  answers ? (
+                    <div className="ans" style={{ marginTop: 6 }}>
+                      {(q.pairs ?? []).map((p, j) => <div key={j}>{j + 1}. {p.left} → {p.right}</div>)}
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 24px", marginTop: 6 }}>
+                      <div>{(q.pairs ?? []).map((p, j) => <div key={j}>{j + 1}. {p.left} &nbsp;<span className="blank" style={{ width: 40, minWidth: 40 }} /></div>)}</div>
+                      <div>
+                        {displayOrder(q.pairs?.length ?? 0, "print", q.question_id).map((own, j) => (
+                          <div key={own}>{CHOICE_LETTERS[j]}) {q.pairs![own].right}</div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                ) : q.choices?.length ? (
                   <div style={{ display: "grid", gridTemplateColumns: q.choices.length > 4 ? "1fr 1fr" : "1fr", gap: "2px 24px", marginTop: 6 }}>
                     {q.choices.map((c) => {
                       const right = answers && q.correct_answers_array.includes(c.choice_id);
@@ -103,6 +133,9 @@ export function QuestionSheetPrint({ packId, answers }: { packId: string; answer
                 ) : null}
                 {q.type === "TEXT_INPUT" ? (
                   answers ? <div className="ans">Accepted: {q.correct_answers_array.join(" / ")}{q.text_matching?.fuzzy === false ? " (exact spelling only)" : ""}</div> : <div style={{ marginTop: 8 }}><span className="blank" /></div>
+                ) : null}
+                {(q.type === "ORDERING" || q.type === "MATCHING") && answers ? (
+                  <div className="small muted">{q.multi_scoring === "ALL_OR_NOTHING" ? "Points only if everything is right" : "Partial credit for each item in the right place"}</div>
                 ) : null}
                 {q.type === "MCQ_MULTI" && answers ? <div className="small muted">{q.multi_scoring === "ALL_OR_NOTHING" ? "Points only if every pick is right" : "Partial credit for each right pick"}</div> : null}
                 {answers && q.explanation ? <div className="small muted" style={{ marginTop: 3 }}>💡 {q.explanation}</div> : null}

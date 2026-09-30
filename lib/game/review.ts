@@ -4,8 +4,9 @@
  * mark a group right or wrong by hand. Pure functions, so the same grouping is
  * used for the review screen, for validating a change, and in tests.
  */
-import type { BankQuestion, Submission, Team } from "./types";
+import { isChoiceType, isSequenceType, type BankQuestion, type Submission, type Team } from "./types";
 import { choiceKey, explainTextMatch, textKey, type MarkOverride, type Overrides, type TextMatch, type Verdict } from "./scoring";
+import { describeSequence, markSequence, sequenceLength, sequenceReviewKey } from "./sequence";
 
 export interface ReviewGroup {
   key: string;
@@ -27,6 +28,12 @@ export interface ReviewGroup {
   final: Verdict;
   /** Accepted only thanks to the typo allowance: worth a second look. */
   typo: boolean;
+  /**
+   * Ordering / matching: the share of the points this answer gets on its own
+   * (e.g. 0.75 for 3 of 4 in place), when that is more than nothing but less
+   * than full. Marking it Right gives full points; Wrong gives none.
+   */
+  partial?: number;
 }
 
 export interface ReviewPayload {
@@ -78,9 +85,10 @@ export function buildReview(
   const ignoreArticles = q.text_matching?.ignore_articles ?? true;
   const groups: ReviewGroup[] = [];
 
-  const finish = (key: string, part: number | null, label: string, variants: string[], teamIds: string[], auto: Verdict, note: string, typo: boolean) => {
+  const finish = (key: string, part: number | null, label: string, variants: string[], teamIds: string[], auto: Verdict, note: string, typo: boolean, partial?: number) => {
     const o = overrides[key];
     groups.push({
+      ...(partial !== undefined ? { partial } : {}),
       key,
       part,
       label,
@@ -95,7 +103,29 @@ export function buildReview(
     });
   };
 
-  if (q.type === "MCQ_SINGLE" || q.type === "MCQ_MULTI") {
+  if (isSequenceType(q.type)) {
+    // Identical full answers share one decision.
+    const n = sequenceLength(q);
+    const all = q.multi_scoring === "ALL_OR_NOTHING";
+    const byKey = new Map<string, { answer: string[]; teams: string[] }>();
+    for (const s of live) {
+      const k = sequenceReviewKey(s.answer);
+      const g = byKey.get(k) ?? { answer: s.answer, teams: [] };
+      g.teams.push(s.team_id);
+      byKey.set(k, g);
+    }
+    for (const [k, g] of byKey) {
+      const { hits } = markSequence(n, g.answer);
+      const auto: Verdict = hits === n ? "CORRECT" : "WRONG";
+      const share = hits > 0 && hits < n && !all ? hits / n : undefined;
+      const what = q.type === "MATCHING" ? "matched correctly" : "in the right place";
+      const note =
+        hits === n ? "Exactly the answer key" : `${hits} of ${n} ${what}${share !== undefined ? ` (${Math.round(share * 100)}% of the points)` : all ? " (all-or-nothing: no points)" : ""}`;
+      finish(k, null, describeSequence(q, g.answer), [], g.teams, auto, note, false, share);
+    }
+    const weight = (g: ReviewGroup) => (g.auto === "CORRECT" ? 2 : g.partial ? 1 : 0);
+    groups.sort((a, b) => weight(b) - weight(a) || (b.partial ?? 0) - (a.partial ?? 0) || b.count - a.count);
+  } else if (isChoiceType(q.type)) {
     const key = new Set(q.correct_answers_array);
     for (const c of q.choices ?? []) {
       const who = live.filter((s) => s.answer.includes(c.choice_id)).map((s) => s.team_id);

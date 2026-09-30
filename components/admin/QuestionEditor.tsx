@@ -1,6 +1,6 @@
 "use client";
 import { useRef, useState } from "react";
-import { CHOICE_LETTERS, MAX_CHOICES, MAX_SUB_QUESTIONS, type BankQuestion, type ChoiceId, type QuestionType } from "@/lib/game/types";
+import { CHOICE_LETTERS, MAX_CHOICES, MAX_SEQUENCE_ITEMS, MAX_SUB_QUESTIONS, type BankQuestion, type ChoiceId, type QuestionType } from "@/lib/game/types";
 import { api, ApiError } from "@/lib/client/api";
 import { GRIP, arrayMove, useSortable } from "@/lib/client/useSortable";
 import { kindOf, uploadMedia, type MediaKind } from "@/lib/client/upload";
@@ -39,6 +39,12 @@ interface ChoiceDraft {
   text: string;
   media_url: string | null;
   correct: boolean;
+}
+
+interface PairDraft {
+  key: string;
+  left: string;
+  right: string;
 }
 
 const newKey = () => Math.random().toString(36).slice(2, 10);
@@ -87,6 +93,17 @@ export function QuestionEditor({
       ? initial.sub_questions.map((sq) => ({ key: newKey(), prompt: sq.prompt, answers: sq.correct_answers_array.join(" | "), points: sq.points ?? null }))
       : [0, 1, 2].map(() => ({ key: newKey(), prompt: "", answers: "", points: null })),
   );
+  // TRUE_FALSE: which one is right (A = true, B = false) and the button labels.
+  const [tfAnswer, setTfAnswer] = useState<"A" | "B">(initial?.type === "TRUE_FALSE" && initial.correct_answers_array[0] === "B" ? "B" : "A");
+  const [tfLabels, setTfLabels] = useState<[string, string]>(
+    initial?.type === "TRUE_FALSE" ? [initial.choices?.[0]?.text ?? "True", initial.choices?.[1]?.text ?? "False"] : ["True", "False"],
+  );
+  // MATCHING: left → right pairs.
+  const [pairs, setPairs] = useState<PairDraft[]>(() =>
+    initial?.pairs?.length
+      ? initial.pairs.map((p) => ({ key: newKey(), left: p.left, right: p.right }))
+      : [0, 1, 2].map(() => ({ key: newKey(), left: "", right: "" })),
+  );
   const [fuzzy, setFuzzy] = useState(initial?.text_matching?.fuzzy ?? true);
   const [time, setTime] = useState<number | null>(initial?.time_limit_sec ?? null);
   const [points, setPoints] = useState<number>(initial?.base_points ?? 100);
@@ -101,9 +118,13 @@ export function QuestionEditor({
   // Drag-to-reorder for choices and parts (letters and part numbers follow the new order).
   const choiceSort = useSortable(choices.length, (from, to) => setChoices((cs) => arrayMove(cs, from, to)));
   const partSort = useSortable(parts.length, (from, to) => setParts((ps) => arrayMove(ps, from, to)));
+  const pairSort = useSortable(pairs.length, (from, to) => setPairs((ps) => arrayMove(ps, from, to)));
 
   const isMcq = type === "MCQ_SINGLE" || type === "MCQ_MULTI";
   const isSub = type === "SUB_QUESTIONS_TEXT";
+  const isOrder = type === "ORDERING";
+  const isMatch = type === "MATCHING";
+  const isTf = type === "TRUE_FALSE";
 
   function switchType(t: QuestionType) {
     setType(t);
@@ -158,7 +179,29 @@ export function QuestionEditor({
       q.media_type = media.kind;
       q.show_media_on_player = showOnPhones;
     }
-    if (isMcq) {
+    if (isTf) {
+      q.choices = [
+        { choice_id: "A", text: tfLabels[0].trim() || "True" },
+        { choice_id: "B", text: tfLabels[1].trim() || "False" },
+      ];
+      q.correct_answers_array = [tfAnswer];
+    } else if (isOrder) {
+      const filled = choices.filter((c) => c.text.trim() || c.media_url);
+      if (filled.length < 2) problems.push("Add at least two items to put in order.");
+      if (filled.length > MAX_SEQUENCE_ITEMS) problems.push(`Use at most ${MAX_SEQUENCE_ITEMS} items.`);
+      q.choices = filled.map((c, i) => ({ choice_id: LETTERS[i], text: c.text.trim(), ...(c.media_url ? { media_url: c.media_url } : {}) }));
+      q.correct_answers_array = q.choices.map((c) => c.choice_id);
+      q.multi_scoring = multiScoring;
+    } else if (isMatch) {
+      const filled = pairs.filter((p) => p.left.trim() || p.right.trim());
+      if (filled.length < 2) problems.push("Add at least two pairs.");
+      filled.forEach((p, i) => {
+        if (!p.left.trim() || !p.right.trim()) problems.push(`Pair ${i + 1} needs both sides.`);
+      });
+      q.pairs = filled.map((p) => ({ left: p.left.trim(), right: p.right.trim() }));
+      q.correct_answers_array = LETTERS.slice(0, filled.length);
+      q.multi_scoring = multiScoring;
+    } else if (isMcq) {
       const filled = choices.filter((c) => c.text.trim() || c.media_url);
       if (filled.length < 2) problems.push("Add at least two choices.");
       q.choices = filled.map((c, i) => ({
@@ -225,8 +268,11 @@ export function QuestionEditor({
             [
               ["MCQ_SINGLE", "One answer", "Tap a choice"],
               ["MCQ_MULTI", "Several answers", "Pick all that apply"],
+              ["TRUE_FALSE", "True or false", "Two big buttons"],
               ["TEXT_INPUT", "Typed answer", "Players type it"],
               ["SUB_QUESTIONS_TEXT", "Sub-questions", "Several typed parts, points add up"],
+              ["ORDERING", "Put in order", "Arrange items first to last"],
+              ["MATCHING", "Matching", "Pair each item with its partner"],
             ] as [QuestionType, string, string][]
           ).map(([t, label, sub]) => (
             <button
@@ -335,7 +381,114 @@ export function QuestionEditor({
       </div>
 
       {/* Choices / answers */}
-      {isMcq ? (
+      {isTf ? (
+        <div>
+          <span className="mb-2 block text-sm text-muted">Which is correct?</span>
+          <div className="grid max-w-md grid-cols-2 gap-2">
+            {(["A", "B"] as const).map((id, i) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setTfAnswer(id)}
+                className={cx(
+                  "rounded-xl border-2 p-3 text-center font-semibold transition",
+                  tfAnswer === id ? (i === 0 ? "border-good bg-good/15 text-good" : "border-bad bg-bad/15 text-bad") : "border-line text-muted hover:border-muted",
+                )}
+              >
+                <span className="block text-2xl">{i === 0 ? "✔" : "✘"}</span>
+                {tfLabels[i] || (i === 0 ? "True" : "False")}
+                {tfAnswer === id ? <span className="block text-xs font-normal">correct answer</span> : null}
+              </button>
+            ))}
+          </div>
+          <div className="mt-3 flex max-w-md flex-wrap items-center gap-2 text-sm">
+            <span className="text-muted">Button labels:</span>
+            {[0, 1].map((i) => (
+              <input
+                key={i}
+                className={inputCls("h-9 w-32")}
+                value={tfLabels[i]}
+                maxLength={40}
+                onChange={(e) => setTfLabels((l) => (i === 0 ? [e.target.value, l[1]] : [l[0], e.target.value]))}
+                placeholder={i === 0 ? "True" : "False"}
+                aria-label={i === 0 ? "Label for true" : "Label for false"}
+              />
+            ))}
+            <span className="text-xs text-muted">e.g. จริง / เท็จ, Yes / No, Fact / Myth</span>
+          </div>
+        </div>
+      ) : isOrder ? (
+        <div>
+          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+            <span className="text-sm text-muted">Write the items in the CORRECT order, first to last. Drag ⠿ to reorder. Phones show them shuffled.</span>
+            <span className="text-xs text-muted">2–{MAX_SEQUENCE_ITEMS} items, text and/or a picture.</span>
+          </div>
+          <ol ref={choiceSort.listRef} className="space-y-2">
+            {choiceSort.order.map((idx, i) => {
+              const c = choices[idx];
+              return (
+                <li key={c.key} data-sortable-item={idx} className={cx("rounded-xl transition", choiceSort.dragging === idx && "opacity-70 ring-2 ring-gold")}>
+                  <ChoiceRow
+                    letter={LETTERS[i]}
+                    number={i + 1}
+                    handle={choiceSort.handleProps(idx)}
+                    choice={{ ...c, correct: false }}
+                    single={false}
+                    uploading={uploading === c.key}
+                    canRemove={choices.length > 2}
+                    onChange={(patch) => setChoices((cs) => cs.map((x) => (x.key === c.key ? { ...x, ...patch } : x)))}
+                    onUpload={(f) => void upload(f, c.key)}
+                    onRemove={() => setChoices((cs) => cs.filter((x) => x.key !== c.key))}
+                  />
+                </li>
+              );
+            })}
+          </ol>
+          {choices.length < MAX_SEQUENCE_ITEMS ? (
+            <Button type="button" size="sm" variant="ghost" className="mt-2" onClick={() => setChoices((cs) => [...cs, { key: newKey(), text: "", media_url: null, correct: false }])}>
+              + Add item
+            </Button>
+          ) : null}
+          <SequenceScoring value={multiScoring} onChange={setMultiScoring} what="item in the right place" />
+        </div>
+      ) : isMatch ? (
+        <div>
+          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+            <span className="text-sm text-muted">Each row is one correct pair. Phones show the right-hand side shuffled. Drag ⠿ to reorder.</span>
+            <span className="text-xs text-muted">2–{MAX_SEQUENCE_ITEMS} pairs.</span>
+          </div>
+          <ol ref={pairSort.listRef} className="space-y-2">
+            {pairSort.order.map((idx, i) => {
+              const p = pairs[idx];
+              const set = (patch: Partial<PairDraft>) => setPairs((ps) => ps.map((x) => (x.key === p.key ? { ...x, ...patch } : x)));
+              return (
+                <li key={p.key} data-sortable-item={idx} className={cx("flex flex-wrap items-center gap-2 rounded-xl border border-line p-2 transition", pairSort.dragging === idx && "opacity-70 ring-2 ring-gold")}>
+                  <span {...pairSort.handleProps(idx)} className="grid h-9 w-5 shrink-0 select-none place-items-center rounded text-lg text-muted hover:text-white">{GRIP}</span>
+                  <span className="w-6 shrink-0 font-display font-bold text-gold tabular">{i + 1}.</span>
+                  <input className={inputCls("h-10 min-w-36 flex-1")} value={p.left} maxLength={200} onChange={(e) => set({ left: e.target.value })} placeholder={i === 0 ? "e.g. Japan" : "Item"} aria-label={`Pair ${i + 1} left`} />
+                  <span className="text-muted">→</span>
+                  <input
+                    className={inputCls("h-10 min-w-36 flex-1")}
+                    style={{ borderColor: "rgb(16 185 129 / 0.5)" }}
+                    value={p.right}
+                    maxLength={200}
+                    onChange={(e) => set({ right: e.target.value })}
+                    placeholder={i === 0 ? "e.g. Tokyo" : "Its match"}
+                    aria-label={`Pair ${i + 1} right`}
+                  />
+                  <RemoveButton disabled={pairs.length <= 2} label={`Remove pair ${i + 1}`} disabledReason="A matching question needs at least 2 pairs" onClick={() => setPairs((ps) => ps.filter((x) => x.key !== p.key))} />
+                </li>
+              );
+            })}
+          </ol>
+          {pairs.length < MAX_SEQUENCE_ITEMS ? (
+            <Button type="button" size="sm" variant="ghost" className="mt-2" onClick={() => setPairs((ps) => [...ps, { key: newKey(), left: "", right: "" }])}>
+              + Add pair
+            </Button>
+          ) : null}
+          <SequenceScoring value={multiScoring} onChange={setMultiScoring} what="correct match" />
+        </div>
+      ) : isMcq ? (
         <div>
           <div className="mb-2 flex items-baseline justify-between">
             <span className="text-sm text-muted">Choices — tick the {type === "MCQ_SINGLE" ? "correct one" : "correct ones"}. Drag ⠿ to reorder.</span>
@@ -567,8 +720,22 @@ export function QuestionEditor({
   );
 }
 
+/** Ordering / matching: part marks or all-or-nothing. */
+function SequenceScoring({ value, onChange, what }: { value: "PARTIAL" | "ALL_OR_NOTHING"; onChange: (v: "PARTIAL" | "ALL_OR_NOTHING") => void; what: string }) {
+  return (
+    <label className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+      <span className="text-muted">Scoring:</span>
+      <select className={inputCls("h-9 w-auto")} value={value} onChange={(e) => onChange(e.target.value as "PARTIAL" | "ALL_OR_NOTHING")}>
+        <option value="PARTIAL">Part marks for each {what}</option>
+        <option value="ALL_OR_NOTHING">Points only if everything is right</option>
+      </select>
+    </label>
+  );
+}
+
 function ChoiceRow({
   letter,
+  number,
   handle,
   choice,
   single,
@@ -579,6 +746,8 @@ function ChoiceRow({
   onRemove,
 }: {
   letter: ChoiceId;
+  /** Ordering: show the position number instead of a letter, and no "Correct" tick. */
+  number?: number;
   handle: ReturnType<ReturnType<typeof useSortable>["handleProps"]>;
   choice: ChoiceDraft;
   single: boolean;
@@ -592,7 +761,11 @@ function ChoiceRow({
   return (
     <div className={cx("flex items-center gap-2 rounded-xl border p-2", choice.correct ? "border-good/70 bg-good/5" : "border-line")}>
       <span {...handle} className="grid h-9 w-5 shrink-0 select-none place-items-center rounded text-lg text-muted hover:text-white">{GRIP}</span>
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg font-display font-bold text-ink" style={{ backgroundColor: choiceColor(letter) }}>{letter}</span>
+      {number !== undefined ? (
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-gold font-display font-bold text-ink tabular">{number}</span>
+      ) : (
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg font-display font-bold text-ink" style={{ backgroundColor: choiceColor(letter) }}>{letter}</span>
+      )}
       {choice.media_url ? (
         <span className="relative shrink-0">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -604,22 +777,29 @@ function ChoiceRow({
         className={inputCls("h-10 min-w-0 flex-1")}
         value={choice.text}
         onChange={(e) => onChange({ text: e.target.value.slice(0, 200) })}
-        placeholder={choice.media_url ? "Caption (optional)" : `Choice ${letter}`}
+        placeholder={choice.media_url ? "Caption (optional)" : number !== undefined ? `Item ${number}` : `Choice ${letter}`}
       />
       <button type="button" className="shrink-0 rounded-lg px-2 py-2 text-sm text-muted hover:bg-white/5 hover:text-white" onClick={() => ref.current?.click()} title="Add a picture to this choice">
         {uploading ? <Spinner className="h-4 w-4" /> : "🖼"}
       </button>
       <input ref={ref} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onUpload(f); e.target.value = ""; }} />
-      <label className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2 py-2 text-sm hover:bg-white/5">
-        <input
-          type={single ? "radio" : "checkbox"}
-          checked={choice.correct}
-          onChange={(e) => onChange({ correct: e.target.checked })}
-          className="h-4 w-4 accent-[var(--color-good)]"
-        />
-        <span className={choice.correct ? "text-good" : "text-muted"}>Correct</span>
-      </label>
-      <RemoveButton disabled={!canRemove} label={`Remove choice ${letter}`} disabledReason="A question needs at least 2 choices" onClick={onRemove} />
+      {number === undefined ? (
+        <label className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2 py-2 text-sm hover:bg-white/5">
+          <input
+            type={single ? "radio" : "checkbox"}
+            checked={choice.correct}
+            onChange={(e) => onChange({ correct: e.target.checked })}
+            className="h-4 w-4 accent-[var(--color-good)]"
+          />
+          <span className={choice.correct ? "text-good" : "text-muted"}>Correct</span>
+        </label>
+      ) : null}
+      <RemoveButton
+        disabled={!canRemove}
+        label={number !== undefined ? `Remove item ${number}` : `Remove choice ${letter}`}
+        disabledReason={number !== undefined ? "An ordering question needs at least 2 items" : "A question needs at least 2 choices"}
+        onClick={onRemove}
+      />
     </div>
   );
 }

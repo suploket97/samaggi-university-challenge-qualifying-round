@@ -18,7 +18,7 @@ create table if not exists public.questions (
   question_id   text primary key check (question_id ~ '^[a-z0-9][a-z0-9_-]{2,63}$'),
   quiz_pack_id  text not null references public.quiz_packs (quiz_pack_id) on delete cascade,
   position      integer not null default 0,
-  type          text not null check (type in ('MCQ_SINGLE', 'MCQ_MULTI', 'TEXT_INPUT', 'SUB_QUESTIONS_TEXT')),
+  type          text not null check (type in ('MCQ_SINGLE', 'MCQ_MULTI', 'TRUE_FALSE', 'TEXT_INPUT', 'SUB_QUESTIONS_TEXT', 'ORDERING', 'MATCHING')),
   data          jsonb not null,  -- the full question, including answers
   updated_at    timestamptz not null default now()
 );
@@ -38,10 +38,10 @@ alter table public.quiz_packs drop constraint if exists quiz_packs_default_time_
 alter table public.quiz_packs add constraint quiz_packs_default_time_limit_sec_check
   check (default_time_limit_sec between 5 and 600);
 
--- Allow the SUB_QUESTIONS_TEXT type (for databases created with an older version of this file).
+-- Allow every question type, including TRUE_FALSE, ORDERING and MATCHING (for databases created with an older version of this file).
 alter table public.questions drop constraint if exists questions_type_check;
 alter table public.questions add constraint questions_type_check
-  check (type in ('MCQ_SINGLE', 'MCQ_MULTI', 'TEXT_INPUT', 'SUB_QUESTIONS_TEXT'));
+  check (type in ('MCQ_SINGLE', 'MCQ_MULTI', 'TRUE_FALSE', 'TEXT_INPUT', 'SUB_QUESTIONS_TEXT', 'ORDERING', 'MATCHING'));
 
 -- Competition log: a permanent record of every game, for settling disputes.
 -- Written by the server as the game runs; read-only in the app.

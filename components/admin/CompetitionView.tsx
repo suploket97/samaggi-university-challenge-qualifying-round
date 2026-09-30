@@ -6,6 +6,7 @@ import { api, ApiError } from "@/lib/client/api";
 import { downloadCsv, downloadXlsx, fileSlug } from "@/lib/client/download";
 import type { CompetitionDetail, CompetitionQuestion } from "@/lib/competition/types";
 import {
+  SCORING_MODE_LABEL,
   VERDICT_LABEL,
   acceptedText,
   answerRows,
@@ -156,6 +157,7 @@ export function CompetitionView({ id }: { id: string }) {
         <Info k="Room" v={<span className="font-mono tracking-widest">{c.room_code}</span>} />
         <Info k="Teams" v={<span className="font-mono">{c.teams.length}</span>} />
         <Info k="Questions played" v={<span className="font-mono">{c.questions_played} / {c.question_total}</span>} />
+        <Info k="Scoring" v={SCORING_MODE_LABEL[c.settings?.scoring_mode ?? "CLASSIC"]} />
         {c.qualification ? <Info k="Qualified" v={<span className="font-mono">{c.qualification.qualified_team_ids.length} (top {c.qualification.qualify_count})</span>} /> : null}
         <Info
           k="Check code"
@@ -430,7 +432,11 @@ function QuestionCard({ q }: { q: CompetitionQuestion }) {
               {q.question.sub_questions.map((sq) => <li key={sq.sub_id} className="whitespace-pre-line">{sq.prompt}</li>)}
             </ol>
           ) : null}
-          {q.question.choices?.length ? (
+          {q.question.type === "ORDERING" || q.question.type === "MATCHING" ? (
+            q.effective.shown_order ? (
+              <p className="mt-2 text-muted">Phones showed: {q.effective.shown_order.join("   ")}</p>
+            ) : null
+          ) : q.question.choices?.length ? (
             <p className="mt-2 text-muted">{q.question.choices.map((c) => `${c.choice_id}) ${c.text || "(picture)"}`).join("   ")}</p>
           ) : null}
           <p className="mt-3"><span className="text-muted">Accepted: </span><span className="text-good">{acceptedText(q.question)}</span></p>
