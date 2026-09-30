@@ -81,10 +81,10 @@ Go to **Host console → Question bank**. There's no spreadsheet needed.
      the question's points evenly. The speed bonus only applies when every part is right; getting some right shows "PARTLY RIGHT".
    - **True or false**: two big buttons on the phone. Tap the one that is correct. The labels can be changed (e.g. จริง / เท็จ, Yes / No, Fact / Myth).
    - **Put in order**: write 2–10 items **in the correct order** (drag ⠿ to fix the order). Phones and the big screen show them shuffled;
-     players tap them in order, first to last. Points are shared by the items in the right place (3 of 4 = 75%), or choose
+     players tap them in order, first to last, and can drag ⠿ to swap places. Points are shared by the items in the right place (3 of 4 = 75%), or choose
      "Points only if everything is right".
-   - **Matching**: write 2–10 pairs, each row one correct pair (e.g. Japan → Tokyo). Phones show the right-hand side shuffled, and
-     players pick a match for each item. Points are shared by the correct matches, or all-or-nothing.
+   - **Matching**: write 2–10 pairs, each row one correct pair (e.g. Japan → Tokyo). Phones show the right-hand side shuffled; players
+     tap an item, then tap its match (matched pairs share a colour). Points are shared by the correct matches, or all-or-nothing.
 3. Tick the correct choice(s), set the **time to answer** and click **Add question**.
 4. Drag the **⠿** handle to reorder questions (mouse or touch; or focus it and use the arrow keys), **Copy** to duplicate a question, and **Edit** to change it later. Choices and sub-question parts have the same ⠿ handle and a **Remove** button.
 

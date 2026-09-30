@@ -10,6 +10,7 @@ import { Button, ConnectionDot, LoadingDots, Logo, Spinner, cx, inputClass } fro
 import { ChoiceBadge, QuestionMedia, SafeImage, TimerBar, ZoomOverlay, choiceTileStyle, phoneQuestionSize } from "@/components/game";
 import { Particles } from "@/components/Particles";
 import { Odometer } from "@/components/Odometer";
+import { GRIP, arrayMove, useSortable } from "@/lib/client/useSortable";
 
 interface MeResponse {
   snapshot: PublicSnapshot;
@@ -204,7 +205,12 @@ function Screen({
       );
 
     case "ANSWER":
-      return <AnswerScreen key={view.question.question_id} q={view.question} remainingMs={view.remaining_ms} onSubmit={onSubmit} sending={sending} reportPaste={reportPaste} />;
+      // On a laptop or tablet, keep the answer area a comfortable reading width instead of stretching edge to edge.
+      return (
+        <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col">
+          <AnswerScreen key={view.question.question_id} q={view.question} remainingMs={view.remaining_ms} onSubmit={onSubmit} sending={sending} reportPaste={reportPaste} />
+        </div>
+      );
 
     case "LOCKED_WAITING": {
       const q = snapshot.current_question;
@@ -595,51 +601,54 @@ function SubQuestionsForm({
 }
 
 /**
- * ORDERING: tap the items in order (first → last). Tap a placed item to take
- * it back out; arrows nudge it up or down. Sent once every item is placed.
+ * ORDERING: tap the items in order (first → last). Placed items can then be
+ * dragged by their ⠿ handle to fine-tune (the handle alone starts a drag, so
+ * scrolling the page still works everywhere else). Tap a placed item to take
+ * it back out. Sent once every item is placed.
  */
 function OrderingForm({ q, header, onSubmit, sending }: { q: PublicQuestion; header: React.ReactNode; onSubmit: (a: string[]) => void; sending: boolean }) {
   const items = q.choices ?? [];
   const [order, setOrder] = useState<string[]>([]);
+  const sort = useSortable(order.length, (from, to) => setOrder((o) => arrayMove(o, from, to)));
   const byId = (id: string) => items.find((c) => c.choice_id === id)!;
   const left = items.filter((c) => !order.includes(c.choice_id));
-  const move = (i: number, d: -1 | 1) =>
-    setOrder((o) => {
-      const j = i + d;
-      if (j < 0 || j >= o.length) return o;
-      const n = [...o];
-      [n[i], n[j]] = [n[j], n[i]];
-      return n;
-    });
   return (
     <div className="flex flex-1 flex-col">
       {header}
-      <p className="mb-3 text-sm text-gold">Tap the items in order, first to last. Tap a placed item to take it back.</p>
-      <ol className="space-y-2">
-        {items.map((_, i) => {
-          const id = order[i];
-          const c = id ? byId(id) : null;
+      <p className="mb-3 text-sm text-gold">Tap the items in order, first to last. Drag ⠿ to swap places; tap an item to take it back.</p>
+      <ol ref={sort.listRef} className="space-y-2">
+        {sort.order.map((idx, pos) => {
+          const c = byId(order[idx]);
           return (
-            <li key={i} className={cx("flex min-h-14 items-center gap-2 rounded-2xl border-2 p-2", c ? "border-gold bg-gold/10" : "border-dashed border-line")}>
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gold font-bold text-ink tabular">{i + 1}</span>
-              {c ? (
-                <>
-                  <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => setOrder((o) => o.filter((x) => x !== id))}>
-                    {c.media_url ? <SafeImage src={c.media_url} className="h-12 w-16 shrink-0 rounded-lg bg-black/20 object-cover" /> : null}
-                    <span className="min-w-0 break-words text-lg font-semibold leading-tight">{c.text}</span>
-                  </button>
-                  <span className="flex shrink-0 flex-col">
-                    <button type="button" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)} className="h-6 w-9 rounded text-muted disabled:opacity-30">▲</button>
-                    <button type="button" aria-label="Move down" disabled={i === order.length - 1} onClick={() => move(i, 1)} className="h-6 w-9 rounded text-muted disabled:opacity-30">▼</button>
-                  </span>
-                </>
-              ) : (
-                <span className="text-sm text-muted">{i === order.length ? "Tap an item below" : ""}</span>
+            <li
+              key={c.choice_id}
+              data-sortable-item={idx}
+              className={cx(
+                "flex min-h-14 items-center gap-2 rounded-2xl border-2 border-gold bg-gold/10 p-2 transition",
+                sort.dragging === idx && "scale-[1.02] bg-gold/25 shadow-xl shadow-black/50",
               )}
+            >
+              <span {...sort.handleProps(idx)} className="grid h-11 w-8 shrink-0 select-none place-items-center rounded-lg text-2xl text-gold/80">{GRIP}</span>
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gold font-bold text-ink tabular">{pos + 1}</span>
+              <button type="button" className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => setOrder((o) => o.filter((x) => x !== c.choice_id))}>
+                {c.media_url ? <SafeImage src={c.media_url} className="h-12 w-16 shrink-0 rounded-lg bg-black/20 object-cover" /> : null}
+                <span className="min-w-0 break-words text-lg font-semibold leading-tight">{c.text}</span>
+              </button>
             </li>
           );
         })}
       </ol>
+      {left.length ? (
+        <ol className={cx("space-y-2", order.length > 0 && "mt-2")}>
+          {left.map((_, k) => (
+            <li key={k} className="flex min-h-14 items-center gap-2 rounded-2xl border-2 border-dashed border-line p-2">
+              <span className="w-8 shrink-0" />
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-panel-2 font-bold text-muted tabular">{order.length + k + 1}</span>
+              <span className="text-sm text-muted">{k === 0 ? "Tap an item below" : ""}</span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
       {left.length ? (
         <div className="mt-4 grid grid-cols-1 gap-2">
           {left.map((c) => (
@@ -670,51 +679,125 @@ function OrderingForm({ q, header, onSubmit, sending }: { q: PublicQuestion; hea
   );
 }
 
-/** MATCHING: pick one match for each item. Each match can be used once. */
+/** One colour per pair, so a matched item and its partner are easy to spot. */
+const PAIR_COLORS = ["#f59e0b", "#38bdf8", "#a78bfa", "#34d399", "#f472b6", "#fb923c", "#22d3ee", "#facc15", "#c084fc", "#4ade80"];
+
+/**
+ * MATCHING: tap an item, then tap its match in the tray at the bottom. Matched
+ * pairs share a colour and number. Tapping a match that is already used moves
+ * it; tapping a matched item lets you change it; ✕ clears it.
+ */
 function MatchingForm({ q, header, onSubmit, sending }: { q: PublicQuestion; header: React.ReactNode; onSubmit: (a: string[]) => void; sending: boolean }) {
   const lefts = q.match_left ?? [];
   const rights = q.choices ?? [];
   const [picks, setPicks] = useState<string[]>(() => lefts.map(() => ""));
+  const [active, setActive] = useState<number | null>(0);
   const filled = picks.filter(Boolean).length;
+  const textOf = (id: string) => rights.find((r) => r.choice_id === id)?.text ?? id;
+
+  function choose(rightId: string) {
+    if (active === null) return;
+    const next = picks.map((p, j) => (j === active ? rightId : p === rightId ? "" : p));
+    setPicks(next);
+    // Move on to the next empty item (after this one, then from the top).
+    const after = next.findIndex((p, j) => j > active && !p);
+    const first = next.findIndex((p) => !p);
+    setActive(after >= 0 ? after : first >= 0 ? first : null);
+  }
+
   return (
     <div className="flex flex-1 flex-col">
       {header}
-      <p className="mb-3 text-sm text-gold">Pick the match for each item. Each match can be used once.</p>
-      <ol className="space-y-3">
-        {lefts.map((l, i) => (
-          <li key={i} className="rounded-2xl border border-line bg-panel p-3">
-            <label className="block">
-              <span className="mb-2 flex items-baseline gap-2">
-                <span className="shrink-0 font-bold text-gold tabular">{i + 1}.</span>
-                <span className="min-w-0 flex-1 break-words text-lg font-semibold leading-snug">{l}</span>
-              </span>
-              <select
-                className={cx(inputClass, "h-12 text-lg", picks[i] ? "border-gold" : "")}
-                value={picks[i]}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setPicks((ps) => ps.map((x, j) => (j === i ? v : x === v ? "" : x)));
-                }}
+      <p className="mb-3 text-sm text-gold">Tap an item, then tap its match below. Tap a matched item to change it.</p>
+      <ol className="space-y-2">
+        {lefts.map((l, i) => {
+          const pick = picks[i];
+          const color = PAIR_COLORS[i % PAIR_COLORS.length];
+          const on = active === i;
+          return (
+            <li key={i}>
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => setActive(i)}
+                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setActive(i)}
+                className={cx("rounded-2xl border-2 p-3 transition", on ? "border-white bg-white/5" : pick ? "" : "border-line bg-panel")}
+                style={pick && !on ? { borderColor: color, backgroundColor: `${color}1a` } : undefined}
               >
-                <option value="">— choose —</option>
-                {rights.map((r) => {
-                  const usedBy = picks.findIndex((p, j) => p === r.choice_id && j !== i);
-                  return (
-                    <option key={r.choice_id} value={r.choice_id}>
-                      {r.text}
-                      {usedBy >= 0 ? ` (now on ${usedBy + 1})` : ""}
-                    </option>
-                  );
-                })}
-              </select>
-            </label>
-          </li>
-        ))}
+                <span className="flex items-baseline gap-2">
+                  <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-sm font-bold text-ink tabular" style={{ backgroundColor: pick || on ? color : "#3f3f46" }}>
+                    {i + 1}
+                  </span>
+                  <span className="min-w-0 flex-1 break-words text-lg font-semibold leading-snug">{l}</span>
+                </span>
+                <span className="mt-2 flex items-center gap-2 pl-9">
+                  {pick ? (
+                    <>
+                      <span className="min-w-0 flex-1 break-words text-lg font-bold" style={{ color }}>→ {textOf(pick)}</span>
+                      <button
+                        type="button"
+                        aria-label="Clear this match"
+                        className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted hover:text-white"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPicks((ps) => ps.map((p, j) => (j === i ? "" : p)));
+                          setActive(i);
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </>
+                  ) : (
+                    <span className={cx("text-sm", on ? "text-white" : "text-muted")}>{on ? "Now tap its match below ↓" : "Tap to match"}</span>
+                  )}
+                </span>
+              </div>
+            </li>
+          );
+        })}
       </ol>
-      <p className="mt-2 text-xs text-muted">Choosing a match that is already used moves it here.</p>
-      <Button size="lg" className="mt-4 w-full" disabled={filled === 0} loading={sending} onClick={() => onSubmit(picks)}>
-        Submit {filled} of {lefts.length} matches
-      </Button>
+      {/* Tray of matches: stays at the bottom of the screen while scrolling. */}
+      <div className="sticky bottom-0 -mx-4 mt-4 border-t border-line bg-ink/95 px-4 pb-4 pt-3 backdrop-blur">
+        <p className="mb-2 text-xs text-muted">
+          {active !== null ? (
+            <>
+              Match for <b className="text-white">{active + 1}. {lefts[active]}</b>
+            </>
+          ) : (
+            "All matched. Tap an item above to change it."
+          )}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {rights.map((r) => {
+            const usedBy = picks.indexOf(r.choice_id);
+            const color = usedBy >= 0 ? PAIR_COLORS[usedBy % PAIR_COLORS.length] : null;
+            return (
+              <button
+                key={r.choice_id}
+                type="button"
+                disabled={active === null}
+                onClick={() => choose(r.choice_id)}
+                className={cx(
+                  "flex min-h-11 items-center gap-1.5 rounded-xl border-2 px-3 py-1.5 text-left font-semibold transition active:scale-95",
+                  color ? "opacity-60" : "border-line bg-panel",
+                  active === null && !color && "opacity-40",
+                )}
+                style={color ? { borderColor: color, backgroundColor: `${color}1a` } : undefined}
+              >
+                {color ? (
+                  <span className="grid h-5 w-5 place-items-center rounded text-[11px] font-bold text-ink tabular" style={{ backgroundColor: color }}>
+                    {usedBy + 1}
+                  </span>
+                ) : null}
+                <span className="break-words">{r.text}</span>
+              </button>
+            );
+          })}
+        </div>
+        <Button size="lg" className="mt-3 w-full" disabled={filled === 0} loading={sending} onClick={() => onSubmit(picks)}>
+          Submit {filled} of {lefts.length} matches
+        </Button>
+      </div>
     </div>
   );
 }
