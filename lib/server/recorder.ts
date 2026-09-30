@@ -1,5 +1,5 @@
 import "server-only";
-import type { GameRecorder, RecordInput } from "@/lib/game/recorder";
+import type { GameRecorder, RecordInput, ReviewEvent } from "@/lib/game/recorder";
 import { competitionId, questionStats } from "@/lib/game/recorder";
 import type { RoomState, Team } from "@/lib/game/types";
 import { getSupabaseAdmin } from "./supabase";
@@ -42,6 +42,11 @@ export class SupabaseRecorder implements GameRecorder {
       }
       await this.event(id, at, "ROOM_DELETED", null, null);
     });
+  }
+
+  /** A host marking change during the review: logged straight away, before the reveal. */
+  async onReview(state: RoomState, at: number, ev: ReviewEvent) {
+    await this.withTables(() => this.event(competitionId(state), at, "MARK_CHANGED", ev.question_index, ev));
   }
 
   /** Databases set up before the log existed get the new tables on first use. */
@@ -95,7 +100,7 @@ export class SupabaseRecorder implements GameRecorder {
     );
   }
 
-  private async write({ command, prev, next, at, question, pack, answers, teams }: RecordInput) {
+  private async write({ command, prev, next, at, question, pack, answers, teams, overrides }: RecordInput) {
     const db = getSupabaseAdmin();
     const id = competitionId(next);
     const qi = next.current_question_index >= 0 ? next.current_question_index : null;
@@ -146,7 +151,7 @@ export class SupabaseRecorder implements GameRecorder {
       }
 
       case "REVEAL_ANSWER": {
-        const stats = question && answers ? questionStats(question, answers) : null;
+        const stats = question && answers ? questionStats(question, answers, overrides ?? []) : null;
         check(
           "save results",
           await db.from("competition_questions").update({ revealed_at: iso(at), results: answers ?? [], stats }).eq("competition_id", id).eq("question_index", qi),
@@ -158,9 +163,13 @@ export class SupabaseRecorder implements GameRecorder {
             .update({ teams: teamList(teams ?? []), standings: next.leaderboard, questions_played: (qi ?? -1) + 1, updated_at: iso(at) })
             .eq("competition_id", id),
         );
-        await this.event(id, at, "ANSWER_REVEALED", qi, stats ? { correct: stats.correct, answered: stats.answered } : null);
+        await this.event(id, at, "ANSWER_REVEALED", qi, stats ? { correct: stats.correct, answered: stats.answered, marking_changes: overrides?.length ?? 0 } : null);
         return;
       }
+
+      case "MEDIA":
+        await this.event(id, at, "MEDIA_CONTROL", qi, { action: command.action });
+        return;
 
       case "SHOW_LEADERBOARD":
         await this.event(id, at, "LEADERBOARD_SHOWN", qi, null);

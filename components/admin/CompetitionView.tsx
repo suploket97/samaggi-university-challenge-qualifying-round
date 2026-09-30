@@ -459,6 +459,21 @@ function QuestionCard({ q }: { q: CompetitionQuestion }) {
               <span className="text-muted"> after {seconds(first.elapsed_ms)}</span>
             </p>
           ) : null}
+          {s?.overrides?.length ? (
+            <div className="mt-3 rounded-lg border border-gold/40 bg-gold/5 px-3 py-2 text-xs">
+              <p className="font-semibold text-gold">Host review before the reveal: {s.overrides.length} marking change{s.overrides.length === 1 ? "" : "s"}</p>
+              <ul className="mt-1 space-y-0.5">
+                {s.overrides.map((o) => (
+                  <li key={o.key}>
+                    {o.part !== null ? <span className="text-muted">Part {o.part + 1}: </span> : null}
+                    <b>{o.label}</b> →{" "}
+                    <span className={o.verdict === "CORRECT" ? "text-good" : "text-bad"}>{o.verdict === "CORRECT" ? "correct" : "wrong"}</span>
+                    <span className="text-muted"> (automatic: {o.auto === "CORRECT" ? "correct" : "wrong"}, changed at {clock(o.at, true)})</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {s?.wrong_answers.length ? (
             <p className="mt-2 text-xs text-muted">
               Common wrong answers: {s.wrong_answers.slice(0, 8).map((w) => `${w.answer} (${w.count})`).join(" · ")}

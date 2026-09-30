@@ -22,6 +22,8 @@ function parseCommand(b: Record<string, unknown>): AdminCommand | null {
       const d = Number(b.delta_sec);
       return Number.isFinite(d) && d !== 0 ? { type: "ADJUST_TIME", delta_sec: d } : null;
     }
+    case "MEDIA":
+      return b.action === "PLAY" || b.action === "PAUSE" || b.action === "RESTART" ? { type: "MEDIA", action: b.action } : null;
     case "END_QUESTION":
     case "REVEAL_ANSWER":
     case "SHOW_LEADERBOARD":

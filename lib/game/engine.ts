@@ -36,8 +36,9 @@ import type {
 } from "./types";
 import { GameError, assertCanApply, createInitialState, isAcceptingAnswers, transition } from "./state-machine";
 import type { ResolvedEvent } from "./state-machine";
-import { rankTeams, scoreSubmission, subQuestionPoints } from "./scoring";
-import type { Tally } from "./scoring";
+import { effectiveChoiceKey, rankTeams, scoreSubmission, subQuestionPoints } from "./scoring";
+import type { MarkOverride, Tally, Verdict } from "./scoring";
+import { buildReview, findGroup, toOverride, type ReviewPayload } from "./review";
 import type { RoomStore } from "./store";
 import { explainAnswer, noopRecorder, type AnswerRecord, type GameRecorder, type RecordInput } from "./recorder";
 
@@ -91,7 +92,7 @@ const MAX_CAS_RETRIES = 3;
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L
 
 /** Extra data gathered while resolving a command, passed on to the recorder. */
-type ResolveContext = Pick<RecordInput, "question" | "pack" | "answers" | "teams">;
+type ResolveContext = Pick<RecordInput, "question" | "pack" | "answers" | "teams" | "overrides">;
 
 export class GameEngine {
   /** Keeps the permanent competition log. Set by the server; tests may replace it. */
@@ -205,9 +206,12 @@ export class GameEngine {
         return { event: { type: "START_QUESTION", question }, ctx: { question: q, pack } };
       }
       case "REVEAL_ANSWER": {
-        const { reveal, leaderboard, question, pack, answers, teams } = await this.scoreCurrentQuestion(state);
-        return { event: { type: "REVEAL_ANSWER", reveal, leaderboard }, ctx: { question, pack, answers, teams } };
+        const { reveal, leaderboard, question, pack, answers, teams, overrides } = await this.scoreCurrentQuestion(state);
+        return { event: { type: "REVEAL_ANSWER", reveal, leaderboard }, ctx: { question, pack, answers, teams, overrides } };
       }
+      case "MEDIA":
+        if (!["PLAY", "PAUSE", "RESTART"].includes(cmd.action)) throw new GameError("BAD_REQUEST", "Unknown media action");
+        return { event: { type: "MEDIA", action: cmd.action }, ctx: {} };
       case "SHOW_QUALIFICATION": {
         const { qualification, teams } = await this.qualify(state, cmd.qualify_count);
         return { event: { type: "SHOW_QUALIFICATION", qualification }, ctx: { teams } };
@@ -239,13 +243,15 @@ export class GameEngine {
     pack: PackInfo;
     answers: AnswerRecord[];
     teams: Team[];
+    overrides: MarkOverride[];
   }> {
     const qIndex = state.current_question_index;
-    const [q, pack, teams, subs] = await Promise.all([
+    const [q, pack, teams, subs, overrides] = await Promise.all([
       this.bank.getQuestion(state.question_ids[qIndex]),
       this.bank.getPack(state.quiz_pack_id!),
       this.store.getTeams(state.room_code),
       this.store.getSubmissions(state.room_code, qIndex),
+      this.store.getOverrides(state.room_code, qIndex),
     ]);
     if (!q || !pack) throw new GameError("BAD_REQUEST", "Question or pack missing from bank");
 
@@ -268,10 +274,15 @@ export class GameEngine {
     for (const team of teams) {
       const sub = byTeam.get(team.team_id);
       const voided = team.frozen_for_question === qIndex;
-      const r = scoreSubmission(q, team.team_id, sub, state.question_started_at!, voided, {
-        base_points: pack.default_base_points,
-        speed_tiers: pack.speed_tiers,
-      });
+      const r = scoreSubmission(
+        q,
+        team.team_id,
+        sub,
+        state.question_started_at!,
+        voided,
+        { base_points: pack.default_base_points, speed_tiers: pack.speed_tiers },
+        overrides,
+      );
       results[team.team_id] = {
         correct: r.correct,
         points: r.points,
@@ -301,20 +312,24 @@ export class GameEngine {
         points: r.points,
         // Locked out by anti-cheat for this question (whether or not an answer had arrived).
         voided,
-        marking: sub ? explainAnswer(q, sub.answer, basePoints) : null,
+        marking: sub ? explainAnswer(q, sub.answer, basePoints, overrides) : null,
         flags: team.flags.filter((f) => f.question_index === qIndex),
       });
     }
 
     const isText = q.type === "TEXT_INPUT";
     const isSub = q.type === "SUB_QUESTIONS_TEXT";
+    const applied = Object.values(overrides).sort((a, b) => a.at - b.at);
+    // Answers the host accepted by hand, shown on the big screen with the answer.
+    const hostAccepted = (part: number | null) =>
+      applied.filter((o) => o.verdict === "CORRECT" && !o.key.startsWith("c:") && o.part === part).map((o) => o.label);
     const subPts = isSub ? subQuestionPoints(q, q.base_points ?? pack.default_base_points) : [];
     const sub_reveal = isSub
       ? (q.sub_questions ?? []).map((sq, i) => ({
           sub_id: sq.sub_id,
           prompt: sq.prompt,
           answer: sq.correct_answers_array[0] ?? "",
-          aliases: sq.correct_answers_array.slice(1),
+          aliases: [...sq.correct_answers_array.slice(1), ...hostAccepted(i)],
           points: subPts[i],
           correct_teams: Object.values(results).filter((r) => r.sub_correct?.[i]).length,
         }))
@@ -324,8 +339,10 @@ export class GameEngine {
         question_index: qIndex,
         question_id: q.question_id,
         type: q.type,
-        correct_display: isText ? [q.correct_answers_array[0]] : isSub ? (sub_reveal ?? []).map((x) => x.answer) : q.correct_answers_array,
+        correct_display: isText ? [q.correct_answers_array[0]] : isSub ? (sub_reveal ?? []).map((x) => x.answer) : effectiveChoiceKey(q, overrides),
         accepted_aliases: isText ? q.correct_answers_array.slice(1) : [],
+        host_accepted: isText ? hostAccepted(null) : [],
+        review_changes: applied.length,
         sub_reveal,
         explanation: q.explanation ?? null,
         results,
@@ -336,7 +353,76 @@ export class GameEngine {
       pack,
       answers,
       teams,
+      overrides: applied,
     };
+  }
+
+  // ----- Host review before the reveal -----------------------------------
+
+  /** Every answer so far for the current question, grouped, with the automatic and final marking. */
+  private async currentReview(state: RoomState, teams?: Team[], subs?: Submission[]): Promise<{ review: ReviewPayload; question: BankQuestion } | null> {
+    if (state.phase !== "PLAYING" && state.phase !== "SUBMITTED_WAITING") return null;
+    const qIndex = state.current_question_index;
+    const [q, t, s, overrides] = await Promise.all([
+      this.bank.getQuestion(state.question_ids[qIndex]),
+      teams ? Promise.resolve(teams) : this.store.getTeams(state.room_code),
+      subs ? Promise.resolve(subs) : this.store.getSubmissions(state.room_code, qIndex),
+      this.store.getOverrides(state.room_code, qIndex),
+    ]);
+    if (!q) return null;
+    return { review: buildReview(q, qIndex, s, t, overrides), question: q };
+  }
+
+  /**
+   * The host marks a group of identical answers right or wrong by hand (or
+   * undoes a change with verdict null). Allowed only before the reveal, only
+   * for the question on screen, and only for answers that actually arrived
+   * (or, for multiple choice, a choice of this question). Every change is
+   * logged in the competition log straight away.
+   */
+  async setReview(code: string, input: { question_index: number; key: string; verdict: Verdict | null }): Promise<ReviewPayload> {
+    const state = await this.getState(code);
+    if (state.phase !== "PLAYING" && state.phase !== "SUBMITTED_WAITING") {
+      throw new GameError("BAD_REQUEST", "Marking can only be changed before the answer is revealed");
+    }
+    if (input.question_index !== state.current_question_index) {
+      throw new GameError("BAD_REQUEST", "That question is no longer on screen. Refresh and try again.");
+    }
+    if (input.verdict !== null && input.verdict !== "CORRECT" && input.verdict !== "WRONG") {
+      throw new GameError("BAD_REQUEST", "Verdict must be CORRECT, WRONG or null");
+    }
+    const current = await this.currentReview(state);
+    if (!current) throw new GameError("BAD_REQUEST", "Question missing from bank");
+    const group = findGroup(current.review, input.key);
+    if (!group) throw new GameError("BAD_REQUEST", "No answer like that has arrived for this question");
+
+    const qIndex = state.current_question_index;
+    const now = this.clock.now();
+    // Same as the automatic marking = no change needed.
+    const verdict = input.verdict === group.auto ? null : input.verdict;
+    await this.store.setOverride(code, qIndex, group.key, verdict ? toOverride(group, verdict, now) : null);
+
+    // If the reveal happened in the meantime, this change did not count: take it back and say so.
+    const after = await this.getState(code);
+    if (after.current_question_index !== qIndex || (after.phase !== "PLAYING" && after.phase !== "SUBMITTED_WAITING")) {
+      await this.store.setOverride(code, qIndex, group.key, null);
+      throw new GameError("BAD_REQUEST", "The answer was revealed before this change could be applied");
+    }
+
+    await this.recordSafely(async () =>
+      this.recorder.onReview?.(state, now, {
+        question_index: qIndex,
+        question_id: current.question.question_id,
+        key: group.key,
+        label: group.label,
+        part: group.part,
+        verdict,
+        auto: group.auto,
+        teams: group.team_names,
+      }),
+    );
+    const updated = await this.currentReview(after);
+    return updated!.review;
   }
 
   private async qualify(state: RoomState, qualifyCount: number): Promise<{ qualification: QualificationPayload; teams: Team[] }> {
@@ -477,8 +563,10 @@ export class GameEngine {
     }
     const answeredBy = new Map(subs.map((s) => [s.team_id, s]));
     const rankOf = new Map(state.leaderboard.map((r) => [r.team_id, r]));
+    const review = current && (state.phase === "PLAYING" || state.phase === "SUBMITTED_WAITING") ? await this.currentReview(state, teams, subs) : null;
     return {
       snapshot: toPublicSnapshot(state, this.clock.now()),
+      review: review?.review ?? null,
       settings: state.settings,
       next_question,
       current_answer: current

@@ -9,7 +9,7 @@ import { choiceTileStyle } from "@/components/game";
 import { AdminShell } from "./AdminShell";
 import { GRIP, arrayMove, useSortable } from "@/lib/client/useSortable";
 import { QuestionEditor, TIME_PRESETS } from "./QuestionEditor";
-import { questionsToRows } from "@/lib/bank/export";
+import { packsToRows, questionsToRows } from "@/lib/bank/export";
 import { downloadCsv, downloadXlsx, fileSlug } from "@/lib/client/download";
 
 interface PackItem {
@@ -108,6 +108,8 @@ export function BankManager() {
             </button>
             {showImport ? <ImportPanel onImported={loadPacks} /> : null}
           </Card>
+
+          <BankBackup packs={packs} />
         </div>
 
         {pack ? <PackEditor key={pack.quiz_pack_id} pack={pack} onChanged={loadPacks} /> : (
@@ -189,7 +191,7 @@ function PackEditor({ pack, onChanged }: { pack: PackItem; onChanged: () => void
           </label>
           <label className="block">
             <span className="mb-1 block text-xs text-muted">Default time per question</span>
-            <select className={inputCls("h-10 w-32")} value={defaultTime} onChange={(e) => setDefaultTime(Number(e.target.value))}>
+            <select className={inputCls("h-10 w-40")} value={defaultTime} onChange={(e) => setDefaultTime(Number(e.target.value))}>
               {[...new Set([...TIME_PRESETS, defaultTime])].sort((a, b) => a - b).map((t) => <option key={t} value={t}>{t} seconds</option>)}
             </select>
           </label>
@@ -447,6 +449,52 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
 // ---------------------------------------------------------------------------
 // Export: spreadsheet (imports back unchanged) and printable question sheets
 // ---------------------------------------------------------------------------
+
+/** Every pack in one file: a backup of the whole question bank that can be imported back. */
+function BankBackup({ packs }: { packs: PackItem[] | null }) {
+  const [busy, setBusy] = useState<"csv" | "xlsx" | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const total = packs?.reduce((n, p) => n + p.question_count, 0) ?? 0;
+
+  async function run(kind: "csv" | "xlsx") {
+    if (!packs?.length) return;
+    setBusy(kind);
+    setErr(null);
+    setDone(null);
+    try {
+      const list = [];
+      for (const p of packs) {
+        const r = await api<{ questions: BankQuestion[] }>(`/api/admin/packs/${encodeURIComponent(p.quiz_pack_id)}`);
+        list.push({ pack: p, questions: r.questions });
+      }
+      const { columns, rows } = packsToRows(list);
+      const name = `question-bank-backup-${new Date().toISOString().slice(0, 10)}`;
+      if (kind === "csv") downloadCsv(`${name}.csv`, rows, columns);
+      else await downloadXlsx(`${name}.xlsx`, [{ name: "Questions", rows, columns, widths: columns.map((c) => (c === "question_text" || c === "explanation" ? 60 : 18)) }]);
+      setDone(`Saved ${rows.length} questions from ${list.length} pack${list.length === 1 ? "" : "s"}.`);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <Card className="p-4">
+      <h2 className="font-headline text-lg font-bold">Back up the whole bank</h2>
+      <p className="mt-1 text-xs text-muted">
+        Every pack in one file ({packs ? `${packs.length} packs, ${total} questions` : "…"}). Import it back any time to restore the packs; the same question ids update in place.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button size="sm" variant="secondary" disabled={!packs?.length || !!busy} loading={busy === "csv"} onClick={() => run("csv")}>⬇ CSV</Button>
+        <Button size="sm" variant="secondary" disabled={!packs?.length || !!busy} loading={busy === "xlsx"} onClick={() => run("xlsx")}>⬇ Excel</Button>
+      </div>
+      {done ? <p className="mt-2 text-xs text-good">{done}</p> : null}
+      {err ? <div className="mt-2"><ErrorNote>{err}</ErrorNote></div> : null}
+    </Card>
+  );
+}
 
 function PackExport({ pack, questions }: { pack: PackItem; questions: BankQuestion[] | null }) {
   const [busy, setBusy] = useState(false);

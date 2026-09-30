@@ -27,6 +27,8 @@ export type StageView =
       question: PublicQuestion;
       correct_display: string[];
       accepted_aliases: string[];
+      /** Answers the host accepted by hand during the review. */
+      host_accepted: string[];
       explanation: string | null;
       answer_distribution: Record<string, number> | null;
       correct_team_count: number;
@@ -54,6 +56,7 @@ export function stageView(s: PublicSnapshot, serverNow: number): StageView {
         question: s.current_question!,
         correct_display: r.correct_display,
         accepted_aliases: r.accepted_aliases,
+        host_accepted: r.host_accepted ?? [],
         explanation: r.explanation,
         answer_distribution: r.answer_distribution,
         correct_team_count: Object.values(r.results).filter((x) => x.correct).length,

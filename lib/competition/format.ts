@@ -4,7 +4,7 @@
  * functions, shared by the log page, the printed report and the exports.
  */
 import type { BankQuestion, ScoreRow } from "@/lib/game/types";
-import type { TextMatch } from "@/lib/game/scoring";
+import type { MarkOverride, TextMatch } from "@/lib/game/scoring";
 import type { AnswerRecord, CompetitionDetail, CompetitionQuestion, CompetitionTeam } from "./types";
 
 type Row = Record<string, string | number>;
@@ -65,6 +65,15 @@ export function acceptedText(q: BankQuestion): string {
 
 export function matchLabel(m: TextMatch | undefined): string {
   if (!m) return "";
+  const base = autoMatchLabel(m);
+  if (m.override === "CORRECT") return `Marked correct by the host during the review (automatic marking: ${lowerFirst(base)})`;
+  if (m.override === "WRONG") return `Marked wrong by the host during the review (automatic marking: ${lowerFirst(base)})`;
+  return base;
+}
+
+const lowerFirst = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
+
+function autoMatchLabel(m: TextMatch): string {
   switch (m.kind) {
     case "EXACT":
       return "Exact match";
@@ -111,9 +120,10 @@ export function markingNote(q: BankQuestion, a: AnswerRecord): string {
   const right = new Set(m.correct_ids ?? []);
   const picked = m.picked ?? [];
   const hits = picked.filter((c) => right.has(c)).length;
+  const keyNote = m.original_ids ? ` The host changed the answer key during the review (was ${m.original_ids.join(", ") || "none"}, now ${[...right].join(", ") || "none"}).` : "";
   if (q.type === "MCQ_MULTI" && !a.correct)
-    return `Picked ${picked.length}: ${hits} right, ${picked.length - hits} wrong, of ${right.size} correct choices${a.fraction > 0 ? " (partial credit)" : ""}.`;
-  return a.correct ? "Picked the correct choice." : `Picked ${picked.join(", ")}; correct: ${[...right].join(", ")}.`;
+    return `Picked ${picked.length}: ${hits} right, ${picked.length - hits} wrong, of ${right.size} correct choices${a.fraction > 0 ? " (partial credit)" : ""}.${keyNote}`;
+  return (a.correct ? "Picked a correct choice." : `Picked ${picked.join(", ")}; correct: ${[...right].join(", ")}.`) + keyNote;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,9 +161,17 @@ const EVENT_TEXT: Record<string, (x: Record<string, unknown>) => string> = {
   TIME_ADJUSTED: (x) => `Host ${Number(x.delta_sec) > 0 ? "added" : "removed"} ${Math.abs(Number(x.delta_sec))} s`,
   ANSWERS_LOCKED_BY_HOST: (x) => `Host locked answers early${x.was_due ? ` (time was due to run out at ${clock(x.was_due as string)})` : ""}`,
   TIME_UP: () => "Time ran out; answers closed",
-  ANSWER_REVEALED: (x) => `Answer revealed${x.answered !== undefined ? ` · ${x.correct} of ${x.answered} answering teams correct` : ""}`,
+  ANSWER_REVEALED: (x) =>
+    `Answer revealed${x.answered !== undefined ? ` · ${x.correct} of ${x.answered} answering teams correct` : ""}${Number(x.marking_changes) > 0 ? ` · ${x.marking_changes} marking change${Number(x.marking_changes) === 1 ? "" : "s"} by the host applied` : ""}`,
   LEADERBOARD_SHOWN: () => "Leaderboard shown",
   QUALIFIED_TEAMS_SHOWN: (x) => `Qualified teams revealed (top ${x.qualify_count}; ${x.qualified} through including ties)`,
+  MARK_CHANGED: (x) => {
+    const what = `${x.part !== null && x.part !== undefined ? `part ${Number(x.part) + 1}: ` : ""}“${x.label}”`;
+    const teams = Array.isArray(x.teams) ? ` (${x.teams.length} team${x.teams.length === 1 ? "" : "s"} so far: ${x.teams.join(", ")})` : "";
+    if (x.verdict === null) return `Host review: ${what} back to automatic marking (${x.auto === "CORRECT" ? "correct" : "wrong"})${teams}`;
+    return `Host review: ${what} marked ${x.verdict === "CORRECT" ? "correct" : "wrong"}; automatic marking said ${x.auto === "CORRECT" ? "correct" : "wrong"}${teams}`;
+  },
+  MEDIA_CONTROL: (x) => `Host ${x.action === "PLAY" ? "played" : x.action === "PAUSE" ? "paused" : "restarted"} the sound/video on the big screen`,
   GAME_ENDED: () => "Game ended",
   ROOM_DELETED: () => "Room deleted",
 };
@@ -329,8 +347,16 @@ export function questionRows(d: CompetitionDetail): Row[] {
       "Accepted with typos": s?.typo_accepted ?? "",
       "Locked out": s?.voided ?? "",
       "Common wrong answers": (s?.wrong_answers ?? []).slice(0, 5).map((w) => `${w.answer} (${w.count})`).join("; "),
+      "Host review changes": reviewSummary(s?.overrides),
     };
   });
+}
+
+/** The host's marking changes for one question, in one line. */
+export function reviewSummary(o: MarkOverride[] | undefined): string {
+  return (o ?? [])
+    .map((x) => `${x.part !== null ? `part ${x.part + 1}: ` : ""}${x.label} → ${x.verdict === "CORRECT" ? "correct" : "wrong"} (auto: ${x.auto === "CORRECT" ? "correct" : "wrong"})`)
+    .join("; ");
 }
 
 export function timelineRows(d: CompetitionDetail): Row[] {

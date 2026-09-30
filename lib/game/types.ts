@@ -168,6 +168,10 @@ export interface RevealPayload {
   correct_display: string[];
   /** TEXT_INPUT aliases (everything after the canonical answer). */
   accepted_aliases: string[];
+  /** Answers the host accepted by hand during the review (typed answers and parts). */
+  host_accepted?: string[];
+  /** How many marking decisions the host changed for this question. */
+  review_changes?: number;
   explanation: string | null;
   results: Record<string, Pick<QuestionResult, "correct" | "points" | "fraction" | "answered" | "voided_by_anti_cheat" | "sub_correct">>;
   /** SUB_QUESTIONS_TEXT: each part's answer and how many teams got it. */
@@ -200,9 +204,16 @@ export interface RoomState {
   reveal: RevealPayload | null;
   leaderboard: ScoreRow[];
   qualification: QualificationPayload | null;
+  /** Host's remote control for the question's sound or video on the big screen. seq increases on every press. */
+  media?: MediaControl | null;
   settings: RoomSettings;
   created_at: number;
   updated_at: number;
+}
+
+export interface MediaControl {
+  action: "PLAY" | "PAUSE" | "RESTART";
+  seq: number;
 }
 
 export interface RoomSettings {
@@ -233,6 +244,7 @@ export type AdminCommand =
   | { type: "REVEAL_ANSWER" }
   | { type: "SHOW_LEADERBOARD" }
   | { type: "SHOW_QUALIFICATION"; qualify_count: number }
+  | { type: "MEDIA"; action: MediaControl["action"] } // play/pause the question's sound or video on the stage
   | { type: "TERMINATE" };
 
 export type SystemCommand = { type: "TIMER_EXPIRED" };

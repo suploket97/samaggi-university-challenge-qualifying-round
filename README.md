@@ -94,7 +94,7 @@ A pack that's loaded in a game still in progress can't be deleted. End that game
 - Click **Upload a file**, or paste a picture straight into the form. Large phone photos are shrunk automatically before upload.
 - Pictures appear large on the big screen and on every player's phone, where players can tap to zoom. They stay visible when the answer is revealed.
 - Untick **Also show on players' phones** if the picture would give the answer away. The phone then shows "Look at the big screen".
-- Sound and video play on the big screen only. Click play on the stage if the browser blocks autoplay.
+- Sound and video play on the big screen only (MP3/M4A/WAV/OGG sound, MP4/WebM video, up to 50 MB). While the question is open, the host console has **▶ Play / ⏸ Pause / ⟲ From the start** buttons that control the big screen. Browsers block sound until someone has clicked once on the big-screen page, so click it once when you set up.
 - Choices can be pictures too. Click 🖼 next to a choice (useful for "Which of these is…" rounds).
 
 **Time per question**
@@ -122,6 +122,20 @@ Download the template and use one row per question:
 **Thai questions**
 Questions, choices and answers can be written in Thai. They display in Noto Sans Thai, a clean sans-serif without the traditional loops.
 Typed answers keep Thai vowel and tone marks (so ไก่ and ไข่ stay different words), and Thai digits count the same as 0–9.
+
+## Checking answers before the reveal (host review)
+While a question is open, and after answers lock, the host console shows **Check answers before the reveal**: every answer that
+has arrived, with identical answers grouped (capitals, accents, spacing and punctuation don't split a group). Each group shows how
+many teams sent it, which teams, and how it was marked automatically ("Exact match", "Accepted with 1 typo", "No accepted answer matched").
+
+- **✔ Right / ✘ Wrong** changes the marking for the whole group, including teams that send the same answer later. **↺ Undo** goes back to automatic marking.
+- Typed answers accepted only because of the typo allowance are labelled **typo accepted: check it** (e.g. "Austria" for "Australia").
+- Multiple choice: marking a choice right or wrong changes the answer key for that question (e.g. accept a second correct choice).
+- Sub-questions: each part is reviewed on its own.
+- Changes are allowed only before **Reveal answer**. The reveal button shows how many changes will be applied, and the big screen lists
+  answers the host accepted as "Also accepted by the judges".
+- Every change is written to the **Competition log** at once (Timeline and full report), and each team's answer sheet says
+  "Marked correct by the host during the review (automatic marking: …)".
 
 ## How scoring works
 - **Correct answer:** base points (100). Fast answers get a bonus: +20 within 5 seconds, +10 within 10 seconds. Only the server's clock counts.
@@ -212,6 +226,9 @@ Downloads and printouts (use the browser's *Save as PDF* for a PDF; Thai prints 
 - **Excel** (tabs: Standings, Answers, Questions, Timeline) and **CSV** (every answer)
 
 Each report shows a **check code**. Export the same record again later: the same code means nothing in it has changed.
+
+**Whole question bank backup** (Question bank → *Back up the whole bank*): every pack in one CSV or Excel file, in the Import
+columns. Importing it back recreates the packs; the same question ids update in place.
 
 **Question packs** (Question bank → open a pack → *Export*): CSV or Excel in the same columns as Import, so you can edit a pack
 in a spreadsheet and import it back; question ids are kept, so re-importing updates questions instead of duplicating them.

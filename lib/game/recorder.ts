@@ -7,15 +7,17 @@
  */
 import type { AntiCheatFlag, BankQuestion, RoomCommand, RoomState, Team } from "./types";
 import type { PackInfo } from "./engine";
-import { explainTextMatch, markSubQuestions, type TextMatch } from "./scoring";
+import { effectiveChoiceKey, judgeText, markSubQuestions, type MarkOverride, type Overrides, type TextMatch } from "./scoring";
 
 /** How an answer was marked, in enough detail to explain it to a team. */
 export interface AnswerMarking {
   /** TEXT_INPUT */
   text?: TextMatch;
-  /** MCQ: what the team picked and what was right. */
+  /** MCQ: what the team picked and what was right (after any host changes to the key). */
   picked?: string[];
   correct_ids?: string[];
+  /** MCQ: the answer key as written, when the host changed it during the review. */
+  original_ids?: string[];
   /** SUB_QUESTIONS_TEXT: every part on its own. */
   parts?: { given: string; match: TextMatch; correct: boolean; points: number }[];
 }
@@ -56,11 +58,28 @@ export interface RecordInput {
   answers?: AnswerRecord[];
   /** REVEAL_ANSWER / SHOW_QUALIFICATION / TERMINATE: teams with their flags. */
   teams?: Team[];
+  /** REVEAL_ANSWER: the host's marking changes that were applied. */
+  overrides?: MarkOverride[];
+}
+
+/** A host marking change during the review, logged the moment it is made. */
+export interface ReviewEvent {
+  question_index: number;
+  question_id: string;
+  key: string;
+  label: string;
+  part: number | null;
+  /** null = the change was undone (back to automatic marking). */
+  verdict: "CORRECT" | "WRONG" | null;
+  auto: "CORRECT" | "WRONG";
+  /** Teams whose answer this covered at the moment of the change. */
+  teams: string[];
 }
 
 export interface GameRecorder {
   onTransition(input: RecordInput): Promise<void>;
   onRoomDeleted(state: RoomState, at: number): Promise<void>;
+  onReview?(state: RoomState, at: number, ev: ReviewEvent): Promise<void>;
 }
 
 export const noopRecorder: GameRecorder = {
@@ -73,26 +92,29 @@ export function competitionId(state: Pick<RoomState, "room_code" | "created_at">
   return `${state.room_code}-${state.created_at}`;
 }
 
-export function explainAnswer(q: BankQuestion, answer: string[], basePoints: number): AnswerMarking {
+export function explainAnswer(q: BankQuestion, answer: string[], basePoints: number, overrides?: Overrides): AnswerMarking {
   switch (q.type) {
     case "TEXT_INPUT":
-      return { text: explainTextMatch(answer[0] ?? "", q) };
+      return { text: judgeText(answer[0] ?? "", q, overrides).match };
     case "SUB_QUESTIONS_TEXT": {
-      const m = markSubQuestions(q, answer, basePoints);
+      const m = markSubQuestions(q, answer, basePoints, overrides);
       return {
         parts: (q.sub_questions ?? []).map((sq, i) => {
           const given = (answer[i] ?? "").trim();
           return {
             given,
-            match: given ? explainTextMatch(given, { ...q, correct_answers_array: sq.correct_answers_array }) : { kind: "BLANK" as const },
+            match: given ? judgeText(given, { ...q, correct_answers_array: sq.correct_answers_array }, overrides, i).match : { kind: "BLANK" as const },
             correct: m.correct[i] ?? false,
             points: m.correct[i] ? m.points[i] : 0,
           };
         }),
       };
     }
-    default:
-      return { picked: [...answer], correct_ids: [...q.correct_answers_array] };
+    default: {
+      const key = effectiveChoiceKey(q, overrides);
+      const changed = key.join() !== [...q.correct_answers_array].join();
+      return { picked: [...answer], correct_ids: key, ...(changed ? { original_ids: [...q.correct_answers_array] } : {}) };
+    }
   }
 }
 
@@ -115,6 +137,8 @@ export interface QuestionStats {
   wrong_answers: { answer: string; count: number }[];
   /** SUB_QUESTIONS_TEXT: the same for each part. */
   parts?: { correct: number; wrong_answers: { answer: string; count: number }[] }[];
+  /** Marking the host changed during the review before the reveal. */
+  overrides?: MarkOverride[];
 }
 
 function topCounts(values: string[], limit: number) {
@@ -130,7 +154,7 @@ function topCounts(values: string[], limit: number) {
   return [...groups.values()].sort((a, b) => b.count - a.count || a.answer.localeCompare(b.answer)).slice(0, limit);
 }
 
-export function questionStats(q: BankQuestion, answers: AnswerRecord[]): QuestionStats {
+export function questionStats(q: BankQuestion, answers: AnswerRecord[], overrides: MarkOverride[] = []): QuestionStats {
   const answered = answers.filter((a) => a.answered && !a.voided);
   const correct = answered.filter((a) => a.correct);
   const partial = answered.filter((a) => !a.correct && a.fraction > 0);
@@ -153,6 +177,7 @@ export function questionStats(q: BankQuestion, answers: AnswerRecord[]): Questio
     typo_accepted: typo,
     avg_correct_ms: times.length ? Math.round(times.reduce((x, y) => x + y, 0) / times.length) : null,
     wrong_answers: [],
+    ...(overrides.length ? { overrides } : {}),
   };
   if (q.type === "TEXT_INPUT") {
     stats.wrong_answers = topCounts(wrongOnes.map((a) => a.answer?.[0] ?? ""), 10);
@@ -163,7 +188,7 @@ export function questionStats(q: BankQuestion, answers: AnswerRecord[]): Questio
     });
   } else {
     // MCQ: how often each wrong choice was picked.
-    const right = new Set(q.correct_answers_array);
+    const right = new Set(answers.find((a) => a.marking?.correct_ids)?.marking?.correct_ids ?? q.correct_answers_array);
     stats.wrong_answers = topCounts(answered.flatMap((a) => (a.answer ?? []).filter((c) => !right.has(c))), 26);
   }
   return stats;

@@ -10,6 +10,7 @@
  *   room:{code}:teams               HASH    team_id -> JSON Team
  *   room:{code}:team_names          HASH    lower(name) -> team_id   (uniqueness via HSETNX)
  *   room:{code}:answers:{qIndex}    HASH    team_id -> JSON Submission (first write wins via HSETNX)
+ *   room:{code}:marks:{qIndex}      HASH    review key -> JSON MarkOverride (host's marking changes)
  *
  * Why this copes with everyone answering at once:
  *   - A submission is ONE HSETNX: no read-modify-write, no lock, no contention
@@ -19,6 +20,7 @@
  *   - Postgres (the question bank) is never touched on the answer path.
  */
 import type { RoomState, Submission, Team } from "./types";
+import type { MarkOverride, Overrides } from "./scoring";
 
 export interface RoomSummary {
   room_code: string;
@@ -43,6 +45,10 @@ export interface RoomStore {
   getSubmission(code: string, qIndex: number, teamId: string): Promise<Submission | null>;
   getSubmissions(code: string, qIndex: number): Promise<Submission[]>;
   countSubmissions(code: string, qIndex: number): Promise<number>;
+
+  getOverrides(code: string, qIndex: number): Promise<Overrides>;
+  /** value null removes the override. */
+  setOverride(code: string, qIndex: number, key: string, value: MarkOverride | null): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,6 +64,7 @@ export interface RedisLike {
   hset(key: string, kv: Record<string, string>): Promise<number>;
   hsetnx(key: string, field: string, value: string): Promise<number>;
   hvals(key: string): Promise<string[]>;
+  hdel(key: string, ...fields: string[]): Promise<number>;
   hlen(key: string): Promise<number>;
   expire(key: string, seconds: number): Promise<number>;
   incr(key: string): Promise<number>;
@@ -76,6 +83,7 @@ const k = {
   teams: (c: string) => `room:${c}:teams`,
   names: (c: string) => `room:${c}:team_names`,
   answers: (c: string, q: number) => `room:${c}:answers:${q}`,
+  marks: (c: string, q: number) => `room:${c}:marks:${q}`,
 };
 
 /**
@@ -143,7 +151,7 @@ export class RedisRoomStore implements RoomStore {
 
   async deleteRoom(code: string) {
     const state = await this.getState(code);
-    const answerKeys = state ? state.question_ids.map((_, i) => k.answers(code, i)) : [];
+    const answerKeys = state ? state.question_ids.flatMap((_, i) => [k.answers(code, i), k.marks(code, i)]) : [];
     await this.r.del(k.state(code), k.version(code), k.teams(code), k.names(code), ...answerKeys);
     await this.r.srem(k.index, code);
   }
@@ -189,6 +197,25 @@ export class RedisRoomStore implements RoomStore {
   async countSubmissions(code: string, qIndex: number) {
     return this.r.hlen(k.answers(code, qIndex));
   }
+
+  async getOverrides(code: string, qIndex: number) {
+    const out: Overrides = {};
+    for (const v of await this.r.hvals(k.marks(code, qIndex))) {
+      const o = JSON.parse(v) as MarkOverride;
+      out[o.key] = o;
+    }
+    return out;
+  }
+
+  async setOverride(code: string, qIndex: number, key: string, value: MarkOverride | null) {
+    const hk = k.marks(code, qIndex);
+    if (value) {
+      await this.r.hset(hk, { [key]: JSON.stringify(value) });
+      await this.r.expire(hk, ROOM_TTL_SEC);
+    } else {
+      await this.r.hdel(hk, key);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +227,7 @@ export class MemoryRoomStore implements RoomStore {
   private teams = new Map<string, Map<string, Team>>();
   private names = new Map<string, Map<string, string>>();
   private answers = new Map<string, Map<string, Submission>>();
+  private marks = new Map<string, Overrides>();
 
   async getState(code: string) {
     const raw = this.states.get(code);
@@ -264,5 +292,14 @@ export class MemoryRoomStore implements RoomStore {
   }
   async countSubmissions(code: string, qIndex: number) {
     return this.answers.get(`${code}:${qIndex}`)?.size ?? 0;
+  }
+  async getOverrides(code: string, qIndex: number) {
+    return JSON.parse(JSON.stringify(this.marks.get(`${code}:${qIndex}`) ?? {})) as Overrides;
+  }
+  async setOverride(code: string, qIndex: number, key: string, value: MarkOverride | null) {
+    const m = this.marks.get(`${code}:${qIndex}`) ?? {};
+    if (value) m[key] = value;
+    else delete m[key];
+    this.marks.set(`${code}:${qIndex}`, m);
   }
 }

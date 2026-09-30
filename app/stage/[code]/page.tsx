@@ -9,7 +9,7 @@ import { Leaderboard } from "@/components/Leaderboard";
 import { QualificationReveal } from "@/components/QualificationReveal";
 import { QrCode } from "@/components/QrCode";
 import { Particles } from "@/components/Particles";
-import type { ScoreRow } from "@/lib/game/types";
+import type { MediaControl, ScoreRow } from "@/lib/game/types";
 
 interface PublicStatus {
   phase: string;
@@ -59,7 +59,7 @@ export default function StagePage() {
         </div>
       </header>
       <main className="min-h-0 flex-1 px-8 pb-8">
-        <StageScreen view={view} status={status} joinUrl={joinUrl} code={code} standings={snapshot.leaderboard} />
+        <StageScreen view={view} status={status} joinUrl={joinUrl} code={code} standings={snapshot.leaderboard} media={snapshot.media ?? null} />
       </main>
     </div>
   );
@@ -84,7 +84,21 @@ function FullscreenButton() {
   );
 }
 
-function StageScreen({ view, status, joinUrl, code, standings }: { view: StageView; status: PublicStatus | null; joinUrl: string; code: string; standings: ScoreRow[] }) {
+function StageScreen({
+  view,
+  status,
+  joinUrl,
+  code,
+  standings,
+  media,
+}: {
+  view: StageView;
+  status: PublicStatus | null;
+  joinUrl: string;
+  code: string;
+  standings: ScoreRow[];
+  media: MediaControl | null;
+}) {
   switch (view.screen) {
     case "LOBBY":
       return (
@@ -159,7 +173,7 @@ function StageScreen({ view, status, joinUrl, code, standings }: { view: StageVi
           >
             {hasMedia ? (
               <div className="flex min-h-0 flex-col items-center justify-center gap-3">
-                <QuestionMedia q={q} className="max-h-full min-h-0 flex-1" />
+                <QuestionMedia q={q} className="max-h-full min-h-0 flex-1" control={media} />
                 {!q.choices && !q.sub_questions ? <p className="shrink-0 font-display text-2xl text-muted">✍️ Type your answer on your phone</p> : null}
               </div>
             ) : null}
@@ -270,6 +284,9 @@ function StageScreen({ view, status, joinUrl, code, standings }: { view: StageVi
                   <p className={cx("mt-4 font-display font-black text-good", picture ? "text-7xl" : "text-8xl")}>{view.correct_display[0]}</p>
                   {view.accepted_aliases.length ? (
                     <p className="mt-6 text-2xl text-muted">Also accepted: {view.accepted_aliases.join(" · ")}</p>
+                  ) : null}
+                  {view.host_accepted.length ? (
+                    <p className="mt-3 text-2xl text-gold">Also accepted by the judges: {view.host_accepted.join(" · ")}</p>
                   ) : null}
                 </div>
               </div>

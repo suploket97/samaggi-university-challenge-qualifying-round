@@ -9,10 +9,13 @@ import { Button, Card, ConnectionDot, ErrorNote, Spinner, cx, inputCls } from "@
 import { ChoiceBadge, Countdown, choiceTileStyle } from "@/components/game";
 import { QrCode } from "@/components/QrCode";
 import { AdminShell } from "./AdminShell";
+import { ReviewPanel } from "./ReviewPanel";
+import type { ReviewPayload } from "@/lib/game/review";
 import { PhaseBadge } from "./AdminHome";
 
 interface AdminStatus {
   snapshot: PublicSnapshot;
+  review: ReviewPayload | null;
   settings: RoomSettings;
   current_answer: {
     correct_answers_array: string[];
@@ -53,6 +56,8 @@ export function RoomControl({ code }: { code: string }) {
   const nextIndex = status?.next_question?.index ?? -1;
   useEffect(() => setTimeOverride(null), [nextIndex]);
   const [busy, setBusy] = useState<string | null>(null);
+  // A review change shows at once; the next poll (a moment later) carries it too.
+  const [localReview, setLocalReview] = useState<{ r: ReviewPayload; until: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [origin, setOrigin] = useState("");
   useEffect(() => setOrigin(window.location.origin), []);
@@ -111,6 +116,11 @@ export function RoomControl({ code }: { code: string }) {
   // Only trust the answer if the status poll is about the question currently on screen.
   const statusSameQ = status?.snapshot.current_question?.question_id === snap.current_question?.question_id;
   const correct = new Set(statusSameQ ? status?.current_answer?.correct_answers_array ?? [] : []);
+  const inReview = snap.phase === "PLAYING" || snap.phase === "SUBMITTED_WAITING";
+  const polledReview = statusSameQ && inReview ? status?.review ?? null : null;
+  const review =
+    localReview && localReview.until > Date.now() && localReview.r.question_index === snap.current_question_index && inReview ? localReview.r : polledReview;
+  const hasMediaControl = !!q?.media_url && (q.media_type === "audio" || q.media_type === "video");
 
   return (
     <AdminShell
@@ -200,9 +210,16 @@ export function RoomControl({ code }: { code: string }) {
                 </span>
               ) : null}
               {av.buttons.revealAnswer ? (
-                <Button size="lg" loading={busy === "reveal"} onClick={() => send({ type: "REVEAL_ANSWER" }, "reveal")}>
-                  👁 Reveal answer
-                </Button>
+                <>
+                  <Button size="lg" loading={busy === "reveal"} onClick={() => send({ type: "REVEAL_ANSWER" }, "reveal")}>
+                    👁 Reveal answer
+                  </Button>
+                  {review?.changes ? (
+                    <span className="self-center text-sm text-gold">
+                      {review.changes} marking change{review.changes === 1 ? "" : "s"} will be applied
+                    </span>
+                  ) : null}
+                </>
               ) : null}
               {av.buttons.showLeaderboard ? (
                 <Button size="lg" variant={snap.phase === "REVEAL_ANSWER" && !isLast ? "secondary" : "primary"} loading={busy === "lb"} onClick={() => send({ type: "SHOW_LEADERBOARD" }, "lb")}>
@@ -323,7 +340,21 @@ export function RoomControl({ code }: { code: string }) {
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={q.media_url} alt="" className="h-24 rounded-lg bg-ink object-contain" />
                 ) : q.media_url ? (
-                  <span className="rounded-lg bg-panel-2 px-3 py-2 text-sm">{q.media_type === "audio" ? "🎵 Sound plays on the stage" : "🎬 Video plays on the stage"}</span>
+                  <div className="rounded-lg bg-panel-2 px-3 py-2 text-sm">
+                    <p>{q.media_type === "audio" ? "🎵 Sound plays on the big screen" : "🎬 Video plays on the big screen"}</p>
+                    {hasMediaControl && inReview ? (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {([["PLAY", "▶ Play"], ["PAUSE", "⏸ Pause"], ["RESTART", "⟲ From the start"]] as const).map(([a, label]) => (
+                          <Button key={a} size="sm" variant="secondary" loading={busy === `m${a}`} onClick={() => send({ type: "MEDIA", action: a }, `m${a}`)}>
+                            {label}
+                          </Button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {hasMediaControl && inReview ? (
+                      <p className="mt-1 text-xs text-muted">If it doesn&apos;t start, click once anywhere on the big-screen page (browsers block sound until then).</p>
+                    ) : null}
+                  </div>
                 ) : null}
                 <p className="min-w-0 flex-1 font-display text-2xl font-semibold">{q.question_text}</p>
               </div>
@@ -372,6 +403,18 @@ export function RoomControl({ code }: { code: string }) {
               </div>
             </Card>
           )}
+
+          {/* ---------------- Host review before the reveal ---------------- */}
+          {review ? (
+            <ReviewPanel
+              code={code}
+              review={review}
+              onChange={(r) => {
+                setLocalReview({ r, until: Date.now() + 3000 });
+                reload();
+              }}
+            />
+          ) : null}
         </div>
 
         {/* ---------------- Teams ---------------- */}

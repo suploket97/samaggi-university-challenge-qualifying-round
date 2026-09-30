@@ -16,6 +16,15 @@ export interface ExportPack {
 export type ExportRow = Record<string, string | number>;
 
 export function questionsToRows(pack: ExportPack, questions: BankQuestion[]): { columns: string[]; rows: ExportRow[] } {
+  return packsToRows([{ pack, questions }]);
+}
+
+/**
+ * Several packs in one sheet (a backup of the whole question bank). Each
+ * pack's details sit on its first row; importing the file recreates every pack.
+ */
+export function packsToRows(list: { pack: ExportPack; questions: BankQuestion[] }[]): { columns: string[]; rows: ExportRow[] } {
+  const questions = list.flatMap((x) => x.questions);
   const maxChoices = Math.max(0, ...questions.map((q) => q.choices?.length ?? 0));
   const choicePics = questions.some((q) => q.choices?.some((c) => c.media_url));
   const maxParts = Math.min(MAX_SUB_QUESTIONS, Math.max(0, ...questions.map((q) => q.sub_questions?.length ?? 0)));
@@ -29,7 +38,7 @@ export function questionsToRows(pack: ExportPack, questions: BankQuestion[]): { 
     "media_url", "media_type", "show_on_phones", "time_limit_sec", "base_points", "multi_scoring", "fuzzy", "max_typos", "explanation",
   ];
 
-  const rows = questions.map((q, i) => {
+  const rows = list.flatMap(({ pack, questions }) => questions.map((q, i) => {
     const r: ExportRow = {};
     for (const c of columns) r[c] = "";
     if (i === 0) {
@@ -63,6 +72,6 @@ export function questionsToRows(pack: ExportPack, questions: BankQuestion[]): { 
     r.max_typos = q.text_matching?.max_typos ?? "";
     r.explanation = q.explanation ?? "";
     return r;
-  });
+  }));
   return { columns, rows };
 }

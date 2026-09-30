@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { Choice, PublicQuestion } from "@/lib/game/types";
+import type { Choice, MediaControl, PublicQuestion } from "@/lib/game/types";
 import { cx } from "./ui";
 
 /**
@@ -90,18 +90,48 @@ export function SafeImage({ src, className, onClick }: { src: string; className?
   );
 }
 
-export function QuestionMedia({ q, className, onZoom, autoPlay = true }: { q: PublicQuestion; className?: string; onZoom?: () => void; autoPlay?: boolean }) {
+export function QuestionMedia({
+  q,
+  className,
+  onZoom,
+  autoPlay = true,
+  control,
+}: {
+  q: PublicQuestion;
+  className?: string;
+  onZoom?: () => void;
+  autoPlay?: boolean;
+  /** The host's play/pause/restart presses (big screen only). */
+  control?: MediaControl | null;
+}) {
+  const ref = useRef<HTMLMediaElement | null>(null);
+  const seq = control?.seq ?? 0;
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !control || !seq) return;
+    if (control.action === "PAUSE") {
+      el.pause();
+      return;
+    }
+    if (control.action === "RESTART") el.currentTime = 0;
+    el.play().catch(() => {
+      /* the browser wants a click on this page first; the host console says so */
+    });
+    // Only a new press (seq) should act, not re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seq]);
+
   if (!q.media_url) return null;
   if (q.media_type === "audio") {
     return (
       <div className={cx("flex w-full flex-col items-center gap-4 rounded-3xl bg-panel/70 p-6", className)}>
         <span className="text-6xl">🎵</span>
-        <audio src={q.media_url} controls autoPlay={autoPlay} className="w-full max-w-xl" />
+        <audio ref={(el: HTMLAudioElement | null) => { ref.current = el; }} src={q.media_url} controls autoPlay={autoPlay} className="w-full max-w-xl" />
       </div>
     );
   }
   if (q.media_type === "video") {
-    return <video src={q.media_url} controls autoPlay={autoPlay} playsInline className={cx("max-h-full max-w-full rounded-2xl", className)} />;
+    return <video ref={(el: HTMLVideoElement | null) => { ref.current = el; }} src={q.media_url} controls autoPlay={autoPlay} playsInline className={cx("max-h-full max-w-full rounded-2xl", className)} />;
   }
   return <SafeImage src={q.media_url} className={cx("max-h-full max-w-full", className)} onClick={onZoom} />;
 }

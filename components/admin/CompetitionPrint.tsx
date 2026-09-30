@@ -9,6 +9,7 @@ import {
   clock,
   dateLong,
   firstCorrect,
+  reviewSummary,
   markingNote,
   orderLabel,
   qualifiedSet,
@@ -95,6 +96,7 @@ export function CompetitionPrint({ id, kind, teamId }: { id: string; kind: Print
                       {clock(cq.started_at)}–{clock(cq.closed_at)} · {cq.effective.time_limit_sec}{"\u00a0"}s
                       {cq.closed_by === "HOST" ? " · locked early by host" : ""}
                       {cq.stats?.typo_accepted ? ` · ${cq.stats.typo_accepted} accepted with typos` : ""}
+                      {cq.stats?.overrides?.length ? <div>Host review: {reviewSummary(cq.stats.overrides)}</div> : null}
                       {(() => {
                         const f = firstCorrect(cq);
                         return f ? <div>First correct: <b>{f.names.join(", ")}</b> ({seconds(f.elapsed_ms)})</div> : null;
@@ -194,8 +196,8 @@ export function CompetitionPrint({ id, kind, teamId }: { id: string; kind: Print
 }
 
 function HostLog({ d }: { d: CompetitionDetail }) {
-  const items = timeline(d).filter((t) => t.warn || ["TIME_ADJUSTED", "ANSWERS_LOCKED_BY_HOST", "QUALIFIED_TEAMS_SHOWN", "GAME_ENDED", "ROOM_DELETED"].includes(t.kind));
-  if (!items.length) return <p className="muted">Nothing unusual: no anti-cheat flags, no time changes and no questions locked early.</p>;
+  const items = timeline(d).filter((t) => t.warn || ["TIME_ADJUSTED", "ANSWERS_LOCKED_BY_HOST", "MARK_CHANGED", "QUALIFIED_TEAMS_SHOWN", "GAME_ENDED", "ROOM_DELETED"].includes(t.kind));
+  if (!items.length) return <p className="muted">Nothing unusual: no anti-cheat flags, no time changes, no marking changes and no questions locked early.</p>;
   return (
     <table>
       <thead><tr><th>Time</th><th className="num">Q</th><th>Team</th><th>Event</th></tr></thead>

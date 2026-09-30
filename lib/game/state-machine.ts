@@ -57,12 +57,14 @@ export const TRANSITIONS: Record<RoomPhase, Partial<Record<CommandType, RoomPhas
   },
   PLAYING: {
     ADJUST_TIME: "PLAYING",
+    MEDIA: "PLAYING",
     TIMER_EXPIRED: "SUBMITTED_WAITING",
     END_QUESTION: "SUBMITTED_WAITING",
     TERMINATE: "ENDED",
   },
   SUBMITTED_WAITING: {
     REVEAL_ANSWER: "REVEAL_ANSWER",
+    MEDIA: "SUBMITTED_WAITING",
     TERMINATE: "ENDED",
   },
   REVEAL_ANSWER: {
@@ -113,6 +115,7 @@ export type ResolvedEvent =
   | { type: "REVEAL_ANSWER"; reveal: RevealPayload; leaderboard: ScoreRow[] }
   | { type: "SHOW_LEADERBOARD" }
   | { type: "SHOW_QUALIFICATION"; qualification: QualificationPayload }
+  | { type: "MEDIA"; action: "PLAY" | "PAUSE" | "RESTART" }
   | { type: "TERMINATE" };
 
 export function createInitialState(
@@ -133,6 +136,7 @@ export function createInitialState(
     reveal: null,
     leaderboard: [],
     qualification: null,
+    media: null,
     settings: { ...DEFAULT_SETTINGS, ...settings },
     created_at: now,
     updated_at: now,
@@ -172,6 +176,7 @@ export function transition(state: RoomState, ev: ResolvedEvent, now: number): Ro
         question_started_at: now,
         question_ends_at: now + ev.question.time_limit_sec * 1000,
         reveal: null,
+        media: null,
       };
     }
 
@@ -205,6 +210,12 @@ export function transition(state: RoomState, ev: ResolvedEvent, now: number): Ro
 
     case "SHOW_LEADERBOARD":
       return base;
+
+    case "MEDIA":
+      if (!state.current_question?.media_url || (state.current_question.media_type !== "audio" && state.current_question.media_type !== "video")) {
+        throw new GameError("BAD_REQUEST", "This question has no sound or video");
+      }
+      return { ...base, media: { action: ev.action, seq: (state.media?.seq ?? 0) + 1 } };
 
     case "SHOW_QUALIFICATION":
       return { ...base, qualification: ev.qualification };

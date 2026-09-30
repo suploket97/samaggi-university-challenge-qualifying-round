@@ -58,6 +58,7 @@ function tcpRedis(connection: string): RedisLike {
     hset: (k, kv) => r.hset(k, kv),
     hsetnx: (k, f, v) => r.hsetnx(k, f, v),
     hvals: (k) => r.hvals(k),
+    hdel: (k, ...f) => r.hdel(k, ...f),
     hlen: (k) => r.hlen(k),
     expire: (k, s) => r.expire(k, s),
     incr: (k) => r.incr(k),

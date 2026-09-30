@@ -87,6 +87,75 @@ export interface TextMatch {
   kind: "EXACT" | "NORMALISED" | "TYPO" | "NONE" | "BLANK";
   matched?: string;
   typos?: number;
+  /** Set when the host changed the automatic marking during the review before the reveal. */
+  override?: Verdict;
+}
+
+// ---------------------------------------------------------------------------
+// Host review: marking changed by hand before the reveal
+// ---------------------------------------------------------------------------
+
+export type Verdict = "CORRECT" | "WRONG";
+
+/**
+ * One marking decision made by the host while reviewing answers. The key
+ * names what it applies to, so the same decision covers every team that sent
+ * the same answer:
+ *   c:B          choice B (multiple choice)
+ *   t:<text>     a typed answer, normalised the same way the matcher compares
+ *   p2:<text>    part 3 (0-based) of a sub-questions answer
+ */
+export interface MarkOverride {
+  key: string;
+  verdict: Verdict;
+  /** What the host saw: the answer as typed, or "B · Canberra". */
+  label: string;
+  /** Which part, for sub-questions (0-based). */
+  part: number | null;
+  /** How it was marked automatically before the change. */
+  auto: Verdict;
+  at: number;
+}
+
+export type Overrides = Record<string, MarkOverride>;
+
+export function choiceKey(id: string): string {
+  return `c:${id}`;
+}
+
+/** Answers that differ only in capitals, accents, punctuation or spaces share a key. */
+export function textKey(raw: string, part: number | null, ignoreArticles = true): string {
+  const n = normalizeAnswer(raw, ignoreArticles).replace(/ /g, "");
+  return `${part === null ? "t" : `p${part}`}:${n}`;
+}
+
+/** The answer key for a multiple-choice question after the host's changes. */
+export function effectiveChoiceKey(q: Pick<BankQuestion, "correct_answers_array" | "choices">, overrides?: Overrides): string[] {
+  if (!overrides) return [...q.correct_answers_array];
+  const key = new Set(q.correct_answers_array);
+  for (const o of Object.values(overrides)) {
+    if (!o.key.startsWith("c:")) continue;
+    const id = o.key.slice(2);
+    if (o.verdict === "CORRECT") key.add(id);
+    else key.delete(id);
+  }
+  const order = (q.choices ?? []).map((c) => c.choice_id as string);
+  return [...key].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+}
+
+/** Marks one typed answer (or one part), applying any host decision for it. */
+export function judgeText(
+  raw: string,
+  q: Pick<BankQuestion, "correct_answers_array" | "text_matching">,
+  overrides?: Overrides,
+  part: number | null = null,
+): { correct: boolean; match: TextMatch } {
+  const match = explainTextMatch(raw, q);
+  if (match.kind === "BLANK") return { correct: false, match };
+  const auto = match.kind !== "NONE";
+  const o = overrides?.[textKey(raw, part, q.text_matching?.ignore_articles ?? true)];
+  if (o) return { correct: o.verdict === "CORRECT", match: { ...match, override: o.verdict } };
+  return { correct: auto, match };
 }
 
 export function explainTextMatch(raw: string, q: Pick<BankQuestion, "correct_answers_array" | "text_matching">): TextMatch {
@@ -132,13 +201,15 @@ export function speedBonus(elapsedMs: number, tiers: SpeedTier[]): number {
 }
 
 /** Fraction of credit (0..1) for an answer, before points are applied. */
-export function answerFraction(q: BankQuestion, answer: string[]): number {
+export function answerFraction(q: BankQuestion, answer: string[], overrides?: Overrides): number {
   switch (q.type) {
     case "MCQ_SINGLE":
-      return answer.length === 1 && answer[0] === q.correct_answers_array[0] ? 1 : 0;
+      // The host may accept a second choice during the review, so check against the whole key.
+      return answer.length === 1 && effectiveChoiceKey(q, overrides).includes(answer[0]) ? 1 : 0;
 
     case "MCQ_MULTI": {
-      const correct = new Set(q.correct_answers_array);
+      const correct = new Set(effectiveChoiceKey(q, overrides));
+      if (correct.size === 0) return 0;
       const picked = new Set(answer);
       if (picked.size === 0) return 0;
       const exact = picked.size === correct.size && [...picked].every((c) => correct.has(c));
@@ -154,10 +225,10 @@ export function answerFraction(q: BankQuestion, answer: string[]): number {
     }
 
     case "TEXT_INPUT":
-      return answer.length > 0 && matchTextAnswer(answer[0], q) ? 1 : 0;
+      return answer.length > 0 && judgeText(answer[0], q, overrides).correct ? 1 : 0;
 
     case "SUB_QUESTIONS_TEXT": {
-      const { earned, total } = markSubQuestions(q, answer, DEFAULT_BASE_POINTS);
+      const { earned, total } = markSubQuestions(q, answer, DEFAULT_BASE_POINTS, overrides);
       return total > 0 ? earned / total : 0;
     }
   }
@@ -184,12 +255,12 @@ export function subQuestionPoints(q: BankQuestion, base: number): number[] {
  * Marks every part on its own (same typo, accent and Thai rules as a typed
  * answer) and sums the points of the parts answered correctly.
  */
-export function markSubQuestions(q: BankQuestion, answer: string[], base: number) {
+export function markSubQuestions(q: BankQuestion, answer: string[], base: number, overrides?: Overrides) {
   const subs = q.sub_questions ?? [];
   const points = subQuestionPoints(q, base);
   const correct = subs.map((s, i) => {
     const given = (answer[i] ?? "").trim();
-    return given !== "" && matchTextAnswer(given, { ...q, correct_answers_array: s.correct_answers_array });
+    return given !== "" && judgeText(given, { ...q, correct_answers_array: s.correct_answers_array }, overrides, i).correct;
   });
   const earned = correct.reduce((t, ok, i) => t + (ok ? points[i] : 0), 0);
   const total = points.reduce((a, b) => a + b, 0);
@@ -203,6 +274,7 @@ export function scoreSubmission(
   questionStartedAt: number,
   voided: boolean,
   packDefaults: { base_points?: number; speed_tiers?: SpeedTier[] } = {},
+  overrides?: Overrides,
 ): QuestionResult {
   const base = q.base_points ?? packDefaults.base_points ?? DEFAULT_BASE_POINTS;
   const tiers = q.speed_tiers ?? packDefaults.speed_tiers ?? DEFAULT_SPEED_TIERS;
@@ -228,7 +300,7 @@ export function scoreSubmission(
 
   if (isSub) {
     // One total for the question: the sum of the parts answered correctly.
-    const m = markSubQuestions(q, sub.answer, base);
+    const m = markSubQuestions(q, sub.answer, base, overrides);
     const allRight = m.correct.length > 0 && m.correct.every(Boolean);
     const bonus = allRight ? speedBonus(elapsed, tiers) : 0; // bonus only when every part is right
     return {
@@ -244,7 +316,7 @@ export function scoreSubmission(
       sub_correct: m.correct,
     };
   }
-  const fraction = answerFraction(q, sub.answer);
+  const fraction = answerFraction(q, sub.answer, overrides);
   const correct = fraction === 1;
   const basePts = Math.round(base * fraction);
   const bonus = correct ? speedBonus(elapsed, tiers) : 0; // bonus only for full marks
