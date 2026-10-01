@@ -1,10 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/client/api";
-import { CHOICE_LETTERS, QUESTION_TYPE_LABEL, type BankQuestion } from "@/lib/game/types";
+import { CHOICE_LETTERS, type BankQuestion } from "@/lib/game/types";
 import { displayOrder } from "@/lib/game/sequence";
 import { subQuestionPoints } from "@/lib/game/scoring";
-import { dateLong, clock } from "@/lib/competition/format";
+import { clock } from "@/lib/competition/format";
+import { dateL, pick, pictureL, typeLabel } from "@/lib/competition/i18n";
+import { Field, FormFoot, FormHead, Toolbar, useFormLang } from "./formkit";
 
 interface PackRow {
   quiz_pack_id: string;
@@ -14,14 +16,19 @@ interface PackRow {
   default_base_points?: number;
 }
 
-const TYPE_LABEL: Record<string, string> = QUESTION_TYPE_LABEL;
-
-/** Printable question sheet: with answers for the host and judges, or questions only as a paper backup. */
+/**
+ * Printable question sheet in the same layout as the official forms, in one
+ * language at a time: Q1 with answers for the host and judges, or Q2 questions
+ * only as the teams' paper backup (with boxes for the team name and number).
+ */
 export function QuestionSheetPrint({ packId, answers }: { packId: string; answers: boolean }) {
   const [pack, setPack] = useState<PackRow | null>(null);
   const [questions, setQuestions] = useState<BankQuestion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [printedAt] = useState(() => Date.now());
+  const [lang, setLang] = useFormLang();
+  const T = (th: string, en: string) => pick(lang, th, en);
+  const pic = pictureL(lang);
 
   useEffect(() => {
     Promise.all([
@@ -43,20 +50,48 @@ export function QuestionSheetPrint({ packId, answers }: { packId: string; answer
   if (!pack || !questions) return <div className="paper-page"><div className="paper"><p className="muted">Loading…</p></div></div>;
 
   const base = pack.default_base_points ?? 100;
+  const code = answers ? "Q1" : "Q2";
+  const total = questions.reduce((n, q) => n + (q.base_points ?? base), 0);
   return (
     <div className="paper-page">
-      <div className="paper">
-        <div className="toolbar no-print">
-          <button className="primary" onClick={() => window.print()}>🖨 Print / Save as PDF</button>
-          <a href={`/admin/bank/print?pack=${encodeURIComponent(packId)}${answers ? "" : "&answers=1"}`}>{answers ? "Switch to questions only" : "Switch to version with answers"}</a>
+      <div className="paper form-doc">
+        <Toolbar lang={lang} setLang={setLang}>
+          <a href={`/admin/bank/print?pack=${encodeURIComponent(packId)}${answers ? "" : "&answers=1"}&lang=${lang}`}>
+            {answers ? T("เปลี่ยนเป็นฉบับไม่มีเฉลย", "Switch to questions only") : T("เปลี่ยนเป็นฉบับมีเฉลย", "Switch to version with answers")}
+          </a>
+        </Toolbar>
+        <section className="form-page flow">
+        <FormHead
+          code={code}
+          title={answers ? T("ชุดคำถามพร้อมเฉลย", "Question sheet with answers") : T("ชุดคำถาม (สำรองกรณีระบบล่ม)", "Question sheet (paper backup)")}
+          sub={answers ? T("สำหรับพิธีกรและกรรมการ ห้ามให้ทีมเห็น", "For the host and judges. Keep this away from the teams.") : T("รอบคัดเลือก", "Qualifying round")}
+          lang={lang}
+        />
+        <div className="fgrid g4">
+          <Field label={T("ชุดคำถาม", "Question pack")} v={pack.title} />
+          <Field label={T("จำนวนข้อ", "Questions")} v={String(questions.length)} />
+          <Field label={T("เวลาเริ่มต้นต่อข้อ", "Default time per question")} v={T(`${pack.default_time_limit_sec} วินาที`, `${pack.default_time_limit_sec} s`)} />
+          {answers ? (
+            <Field label={T("คะแนนเต็ม", "Total points")} v={String(total)} />
+          ) : (
+            <Field label={T("พิมพ์เมื่อ", "Printed")} v={`${dateL(printedAt, lang)} · ${clock(printedAt)}`} />
+          )}
         </div>
-        <div className="muted small" style={{ letterSpacing: ".2em", textTransform: "uppercase", fontWeight: 700 }}>Samaggi University Challenge · Qualifying Round</div>
-        <h1 style={{ marginTop: 6 }}>{pack.title}</h1>
-        <div className="meta">
-          <span><b>{answers ? "Host copy, with answers. Keep this away from the teams." : "Questions only"}</b></span>
-          <span>{questions.length} questions · default {pack.default_time_limit_sec} s each</span>
-          <span className="small">Printed {dateLong(printedAt)} {clock(printedAt)}</span>
-        </div>
+        {answers ? null : (
+          <div className="fgrid g3">
+            <Field label={T("เลขทีม", "Team No.")} v="" tall />
+            <Field label={T("ชื่อทีม", "Team name")} v="" tall />
+            <Field label={T("หัวหน้าทีม (ลงนาม)", "Captain (signature)")} v="" tall />
+          </div>
+        )}
+        {answers ? null : (
+          <p className="fnote">
+            {T(
+              "เขียนคำตอบลงบนใบนี้ ตัวเลือกให้วงกลมตัวอักษร ข้อเรียงลำดับให้ใส่ตัวเลข 1, 2, 3… ในช่อง ส่งใบคืนกรรมการเมื่อหมดเวลาแต่ละข้อ",
+              "Write your answers on this sheet. Circle the letter for choice questions; number the boxes 1, 2, 3… for ordering. Hand the sheet to a judge when told.",
+            )}
+          </p>
+        )}
         {pack.description ? <p className="muted">{pack.description}</p> : null}
 
         <div style={{ marginTop: 16 }}>
@@ -66,28 +101,28 @@ export function QuestionSheetPrint({ packId, answers }: { packId: string; answer
             return (
               <div key={q.question_id} className="qblock">
                 <div className="small muted">
-                  <b style={{ color: "#111", fontSize: 14 }}>{i + 1}.</b>&nbsp; {TYPE_LABEL[q.type]} · {q.time_limit_sec ?? pack.default_time_limit_sec} s
-                  {answers ? ` · ${pts} pts` : ""}
+                  <b style={{ color: "#111", fontSize: 14 }}>{i + 1}.</b>&nbsp; {typeLabel(q.type, lang)} · {T(`${q.time_limit_sec ?? pack.default_time_limit_sec} วินาที`, `${q.time_limit_sec ?? pack.default_time_limit_sec} s`)}
+                  {answers ? T(` · ${pts} คะแนน`, ` · ${pts} pts`) : ""}
                 </div>
                 <div className="q-text" style={{ fontSize: 15, marginTop: 2 }}>{q.question_text}</div>
                 {q.media_url && (q.media_type ?? "image") === "image" ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={q.media_url} alt="" />
                 ) : q.media_url ? (
-                  <div className="small muted">[{q.media_type} clip]</div>
+                  <div className="small muted">[{q.media_type === "audio" ? T("คลิปเสียง", "audio clip") : T("คลิปวิดีโอ", "video clip")}]</div>
                 ) : null}
                 {q.type === "ORDERING" ? (
                   answers ? (
                     <ol className="ans" style={{ margin: "6px 0 0", paddingLeft: 22 }}>
-                      {(q.choices ?? []).map((c) => <li key={c.choice_id}>{c.text || "(picture)"}</li>)}
+                      {(q.choices ?? []).map((c) => <li key={c.choice_id}>{c.text || pic}</li>)}
                     </ol>
                   ) : (
                     // Shuffled for the paper copy (never in the correct order), with a box to number each item.
                     <div style={{ marginTop: 6 }}>
                       {displayOrder(q.choices?.length ?? 0, "print", q.question_id).map((own) => (
-                        <div key={own}>☐&nbsp; {q.choices![own].text || "(picture)"}</div>
+                        <div key={own}>☐&nbsp; {q.choices![own].text || pic}</div>
                       ))}
-                      <div className="small muted">Number the boxes 1, 2, 3… in order.</div>
+                      <div className="small muted">{T("ใส่ตัวเลข 1, 2, 3… ในช่องตามลำดับ", "Number the boxes 1, 2, 3… in order.")}</div>
                     </div>
                   )
                 ) : q.type === "MATCHING" ? (
@@ -111,7 +146,7 @@ export function QuestionSheetPrint({ packId, answers }: { packId: string; answer
                       const right = answers && q.correct_answers_array.includes(c.choice_id);
                       return (
                         <div key={c.choice_id} className={right ? "ok" : undefined}>
-                          {c.choice_id}) {c.text || "(picture)"} {right ? "✔" : ""}
+                          {c.choice_id}) {c.text || pic} {right ? "✔" : ""}
                         </div>
                       );
                     })}
@@ -123,7 +158,7 @@ export function QuestionSheetPrint({ packId, answers }: { packId: string; answer
                       <li key={sq.sub_id} style={{ marginTop: 3 }}>
                         <span className="q-text">{sq.prompt}</span>
                         {answers ? (
-                          <span className="ans"> → {sq.correct_answers_array.join(" / ")} <span className="muted small">({subPts[j]} pts)</span></span>
+                          <span className="ans"> → {sq.correct_answers_array.join(" / ")} <span className="muted small">({T(`${subPts[j]} คะแนน`, `${subPts[j]} pts`)})</span></span>
                         ) : (
                           <div><span className="blank" /></div>
                         )}
@@ -132,17 +167,19 @@ export function QuestionSheetPrint({ packId, answers }: { packId: string; answer
                   </ol>
                 ) : null}
                 {q.type === "TEXT_INPUT" ? (
-                  answers ? <div className="ans">Accepted: {q.correct_answers_array.join(" / ")}{q.text_matching?.fuzzy === false ? " (exact spelling only)" : ""}</div> : <div style={{ marginTop: 8 }}><span className="blank" /></div>
+                  answers ? <div className="ans">{T("คำตอบที่ยอมรับ", "Accepted")}: {q.correct_answers_array.join(" / ")}{q.text_matching?.fuzzy === false ? T(" (ต้องสะกดตรงเท่านั้น)", " (exact spelling only)") : ""}</div> : <div style={{ marginTop: 8 }}><span className="blank" /></div>
                 ) : null}
                 {(q.type === "ORDERING" || q.type === "MATCHING") && answers ? (
-                  <div className="small muted">{q.multi_scoring === "ALL_OR_NOTHING" ? "Points only if everything is right" : "Partial credit for each item in the right place"}</div>
+                  <div className="small muted">{q.multi_scoring === "ALL_OR_NOTHING" ? T("ได้คะแนนเมื่อถูกทั้งหมดเท่านั้น", "Points only if everything is right") : T("ได้คะแนนบางส่วนตามจำนวนที่ถูก", "Partial credit for each item in the right place")}</div>
                 ) : null}
-                {q.type === "MCQ_MULTI" && answers ? <div className="small muted">{q.multi_scoring === "ALL_OR_NOTHING" ? "Points only if every pick is right" : "Partial credit for each right pick"}</div> : null}
+                {q.type === "MCQ_MULTI" && answers ? <div className="small muted">{q.multi_scoring === "ALL_OR_NOTHING" ? T("ได้คะแนนเมื่อเลือกถูกทั้งหมดเท่านั้น", "Points only if every pick is right") : T("ได้คะแนนบางส่วนตามข้อที่เลือกถูก", "Partial credit for each right pick")}</div> : null}
                 {answers && q.explanation ? <div className="small muted" style={{ marginTop: 3 }}>💡 {q.explanation}</div> : null}
               </div>
             );
           })}
         </div>
+        <FormFoot code={code} lang={lang} note={answers ? T("เอกสารลับสำหรับพิธีกรและกรรมการ", "Confidential: host and judges only") : undefined} />
+        </section>
       </div>
     </div>
   );

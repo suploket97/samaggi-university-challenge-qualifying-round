@@ -3,194 +3,211 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/client/api";
 import type { CompetitionDetail } from "@/lib/competition/types";
 import { OfficialRecord } from "./OfficialRecord";
-import {
-  SCORING_MODE_LABEL,
-  VERDICT_LABEL,
-  acceptedText,
-  answerText,
-  clock,
-  dateLong,
-  firstCorrect,
-  reviewSummary,
-  markingNote,
-  orderLabel,
-  qualifiedSet,
-  seconds,
-  standings,
-  teamSheet,
-  tieBreakNote,
-  timeline,
-  verdict,
-} from "@/lib/competition/format";
+import { acceptedText, answerText, clock, firstCorrect, qualifiedSet, standings, teamSheet, verdict } from "@/lib/competition/format";
+import { dateL, markingNoteL, modeLabel, orderLabelL, pick, secondsL, tieNoteL, timelineL, verdictLabel, type Lang } from "@/lib/competition/i18n";
+import { Field, FormFoot, FormHead, Sigs, Th, Toolbar, useFormLang } from "./formkit";
 
 export type PrintKind = "qualified" | "full" | "team" | "official";
 
 /**
- * Print-ready report on a white page. The browser's "Save as PDF" turns it
+ * Print-ready reports in the same layout as the official forms, in one
+ * language at a time (Thai or English). The browser's "Save as PDF" turns it
  * into a PDF, with Thai rendered correctly (the browser lays out the text).
  */
 export function CompetitionPrint({ id, kind, teamId }: { id: string; kind: PrintKind; teamId?: string | null }) {
   const [d, setD] = useState<CompetitionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [printedAt] = useState(() => new Date());
+  const [printedAt] = useState(() => Date.now());
+  const [lang, setLang] = useFormLang();
 
   useEffect(() => {
     api<CompetitionDetail>(`/api/admin/competitions/${encodeURIComponent(id)}`).then(setD).catch((e) => setError((e as ApiError).message));
   }, [id]);
 
   useEffect(() => {
-    if (d) document.title = `${kind === "qualified" ? "Qualified teams" : kind === "team" ? "Team answers" : kind === "official" ? "Official record F1-F4" : "Competition report"} – ${d.competition.pack_title ?? d.competition.room_code}`;
+    if (!d) return;
+    const name = kind === "qualified" ? "Qualified teams" : kind === "team" ? "Team answers" : kind === "official" ? "Official record F1-F4" : "Competition report";
+    document.title = `${name} – ${d.competition.pack_title ?? d.competition.room_code}`;
   }, [d, kind]);
 
   if (error) return <div className="paper-page"><div className="paper"><p className="bad">{error}</p></div></div>;
   if (!d) return <div className="paper-page"><div className="paper"><p className="muted">Loading…</p></div></div>;
-
   if (kind === "official") return <OfficialRecord d={d} />;
 
+  const T = (th: string, en: string) => pick(lang, th, en);
   const c = d.competition;
   const rows = standings(d);
   const q = qualifiedSet(d);
   const team = teamId ? c.teams.find((t) => t.team_id === teamId) : null;
+  const code = kind === "qualified" ? "R1" : kind === "full" ? "R2" : "R3";
+  const title =
+    kind === "qualified" ? T("รายชื่อทีมที่ผ่านการคัดเลือก", "Qualified teams") : kind === "team" ? T(`ใบคำตอบของทีม: ${team?.name ?? ""}`, `Answer sheet: ${team?.name ?? "team"}`) : T("รายงานผลการแข่งขัน", "Competition report");
 
   return (
     <div className="paper-page">
-      <div className="paper">
-        <div className="toolbar no-print">
-          <button className="primary" onClick={() => window.print()}>🖨 Print / Save as PDF</button>
-          <span className="muted small">In the print window, choose “Save as PDF” as the printer to get a PDF file.</span>
-        </div>
+      <div className="paper form-doc">
+        <Toolbar lang={lang} setLang={setLang} />
 
-        <header>
-          <div className="muted small" style={{ letterSpacing: ".2em", textTransform: "uppercase", fontWeight: 700 }}>Samaggi University Challenge · Qualifying Round</div>
-          <h1 style={{ marginTop: 6 }}>
-            {kind === "qualified" ? "Qualified teams" : kind === "team" ? `Answer sheet: ${team?.name ?? "team"}` : "Competition report"}
-          </h1>
-          <div className="meta">
-            <span><b>{c.pack_title ?? "—"}</b></span>
-            <span>{dateLong(c.created_at)}, started {clock(c.created_at)}</span>
-            <span>Room <span className="code">{c.room_code}</span></span>
-            <span>{c.teams.length} teams · {c.questions_played} of {c.question_total} questions</span>
-            <span>Scoring: {SCORING_MODE_LABEL[c.settings?.scoring_mode ?? "CLASSIC"]}</span>
+        <section className="form-page flow">
+          <FormHead code={code} title={title} sub={T("รอบคัดเลือก", "Qualifying round")} lang={lang} />
+          <div className="fgrid g4">
+            <Field label={T("วันที่", "Date")} v={`${dateL(c.created_at, lang)} · ${clock(c.created_at)}`} />
+            <Field label={T("รหัสห้อง", "Room code")} v={<span className="code">{c.room_code}</span>} />
+            <Field label={T("ชุดคำถาม", "Question pack")} v={c.pack_title ?? "—"} />
+            <Field label={T("โหมดคะแนน", "Scoring mode")} v={modeLabel(c.settings?.scoring_mode, lang)} />
+            <Field label={T("จำนวนทีม", "Teams")} v={String(c.teams.length)} />
+            <Field label={T("จำนวนข้อที่เล่น", "Questions played")} v={`${c.questions_played} / ${c.question_total}`} />
+            <Field label={T("พิมพ์เมื่อ", "Printed")} v={`${dateL(printedAt, lang)} · ${clock(printedAt)}`} />
+            <Field
+              label={T("สถานะ", "Status")}
+              v={
+                c.status === "LIVE" ? (
+                  <span className="bad">{T("เกมยังไม่จบ ยังไม่ใช่ผลสุดท้าย", "Game still running: not final")}</span>
+                ) : (
+                  `${T("ผลสุดท้าย", "Final record")}${c.finished_at ? T(` จบเกม ${clock(c.finished_at)}`, `, ended ${clock(c.finished_at)}`) : ""}`
+                )
+              }
+            />
           </div>
-          <div className="meta small">
-            <span>Printed {dateLong(printedAt.getTime())} {clock(printedAt.getTime())}</span>
-            <span>Check code <b className="code">{d.fingerprint}</b></span>
-            {c.status === "LIVE" ? <span className="bad">Game still running: this is not final</span> : <span>Final record{c.finished_at ? `, game ended ${clock(c.finished_at)}` : ""}</span>}
-          </div>
-        </header>
 
-        {kind === "qualified" ? <Qualified d={d} /> : null}
-        {kind === "team" && teamId ? <TeamAnswers d={d} teamId={teamId} /> : null}
-        {kind === "full" ? (
-          <>
-            <h2>Final standings</h2>
-            <StandingsTable d={d} />
-            <h2 className="page-break">Questions</h2>
-            <table>
-              <thead>
-                <tr><th className="num">#</th><th>Question</th><th>Accepted answers</th><th className="num">Correct</th><th>Timing</th></tr>
-              </thead>
-              <tbody>
-                {d.questions.map((cq) => (
-                  <tr key={cq.question_index}>
-                    <td className="num">{cq.question_index + 1}</td>
-                    <td className="q-text">{cq.question.question_text}</td>
-                    <td>{acceptedText(cq.question)}</td>
-                    <td className="num">{cq.stats ? `${cq.stats.correct}/${cq.stats.answered}` : "–"}</td>
-                    <td className="small">
-                      {clock(cq.started_at)}–{clock(cq.closed_at)} · {cq.effective.time_limit_sec}{"\u00a0"}s
-                      {cq.closed_by === "HOST" ? " · locked early by host" : ""}
-                      {cq.stats?.typo_accepted ? ` · ${cq.stats.typo_accepted} accepted with typos` : ""}
-                      {cq.stats?.overrides?.length ? <div>Host review: {reviewSummary(cq.stats.overrides)}</div> : null}
-                      {(() => {
-                        const f = firstCorrect(cq);
-                        return f ? <div>First correct: <b>{f.names.join(", ")}</b> ({seconds(f.elapsed_ms)})</div> : null;
-                      })()}
-                    </td>
+          {kind === "qualified" ? <Qualified /> : null}
+          {kind === "team" && teamId ? <TeamAnswers d={d} teamId={teamId} lang={lang} /> : null}
+          {kind === "full" ? (
+            <>
+              <p className="fst">{T("ตารางคะแนนสุดท้าย", "Final standings")}</p>
+              <StandingsTable />
+              <p className="fst page-break">{T("คำถาม", "Questions")}</p>
+              <table className="ftable">
+                <thead>
+                  <tr>
+                    <Th label="#" w="5%" />
+                    <Th label={T("คำถาม", "Question")} w="34%" />
+                    <Th label={T("คำตอบที่ยอมรับ", "Accepted answers")} w="22%" />
+                    <Th label={T("ถูก/ตอบ", "Correct")} w="8%" />
+                    <Th label={T("เวลาและหมายเหตุ", "Timing and notes")} w="31%" />
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            <h2>Anti-cheat and host actions</h2>
-            <HostLog d={d} />
-            <p className="muted small" style={{ marginTop: 18 }}>
-              Every team's individual answers are in the Excel download, or print one team's answer sheet from the Competition log.
-            </p>
-          </>
-        ) : null}
+                </thead>
+                <tbody>
+                  {d.questions.map((cq) => {
+                    const f = firstCorrect(cq);
+                    const notes = [
+                      `${clock(cq.started_at)}–${clock(cq.closed_at)} · ${secondsL(cq.effective.time_limit_sec * 1000, lang).replace(".0", "")}`,
+                      cq.closed_by === "HOST" ? T("พิธีกรปิดรับก่อนเวลา", "locked early by host") : "",
+                      cq.stats?.typo_accepted ? T(`ยอมรับคำพิมพ์ผิด ${cq.stats.typo_accepted} ทีม`, `${cq.stats.typo_accepted} accepted with typos`) : "",
+                      cq.stats?.overrides?.length
+                        ? T("พิธีกรตรวจ: ", "Host review: ") +
+                          cq.stats.overrides
+                            .map((o) => `${o.part !== null ? T(`ส่วนที่ ${o.part + 1}: `, `part ${o.part + 1}: `) : ""}${o.label} → ${o.verdict === "CORRECT" ? T("ถูก", "correct") : T("ผิด", "wrong")}`)
+                            .join("; ")
+                        : "",
+                      f ? T(`ตอบถูกคนแรก: ${f.names.join(", ")} (${secondsL(f.elapsed_ms, lang)})`, `First correct: ${f.names.join(", ")} (${secondsL(f.elapsed_ms, lang)})`) : "",
+                    ].filter(Boolean);
+                    return (
+                      <tr key={cq.question_index}>
+                        <td className="c">{cq.question_index + 1}</td>
+                        <td className="q-text">{cq.question.question_text}</td>
+                        <td className="tiny">{acceptedText(cq.question)}</td>
+                        <td className="c">{cq.stats ? `${cq.stats.correct}/${cq.stats.answered}` : "–"}</td>
+                        <td className="tiny">{notes.join(" · ")}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <p className="fst">{T("ธงกันโกงและการดำเนินการของพิธีกร", "Anti-cheat and host actions")}</p>
+              <HostLog />
+              <p className="tiny muted">
+                {T("คำตอบรายทีมทั้งหมดอยู่ในไฟล์ Excel หรือพิมพ์ใบคำตอบของแต่ละทีมได้จาก Competition log", "Every team's individual answers are in the Excel download, or print one team's answer sheet from the Competition log.")}
+              </p>
+            </>
+          ) : null}
 
-        {kind !== "team" ? (
-          <div className="sign keep">
-            <div>Checked by (name)</div>
-            <div>Signature</div>
-            <div>Date and time</div>
-          </div>
-        ) : null}
+          {kind !== "team" ? <Sigs items={[T("ผู้ตรวจ", "Checked by"), T("หัวหน้ากรรมการ", "Chief judge")]} lang={lang} /> : null}
+          <FormFoot code={code} lang={lang} check={d.fingerprint} />
+        </section>
       </div>
     </div>
   );
 
-  function Qualified({ d }: { d: CompetitionDetail }) {
+  function Qualified() {
     if (!c.qualification) {
       return (
         <>
-          <p className="bad" style={{ marginTop: 16 }}>Qualification hasn't been revealed in this game yet. Current standings:</p>
-          <StandingsTable d={d} />
+          <p className="bad">{T("เกมนี้ยังไม่ได้ประกาศทีมที่ผ่าน ตารางคะแนนปัจจุบัน:", "Qualification hasn't been revealed in this game yet. Current standings:")}</p>
+          <StandingsTable />
         </>
       );
     }
     const through = rows.filter((r) => q.has(r.team_id));
     const tied = through.length > c.qualification.qualify_count;
+    const rest = rows.filter((r) => !q.has(r.team_id)).slice(0, 5);
     return (
       <>
-        <p style={{ marginTop: 14 }}>
-          Top <b>{c.qualification.qualify_count}</b> qualify.{tied ? ` ${through.length} teams go through because of a tie at the cut.` : ""}
+        <p className="fst">
+          {T(`ผ่าน ${c.qualification.qualify_count} อันดับแรก`, `Top ${c.qualification.qualify_count} qualify`)}
+          {tied ? <small>{T(` · ผ่าน ${through.length} ทีมเพราะมีทีมเสมอที่เส้นตัด`, ` · ${through.length} teams go through because of a tie at the cut`)}</small> : null}
         </p>
-        <table>
+        <table className="ftable">
           <thead>
-            <tr><th className="num">Rank</th><th>Team</th><th className="num">Score</th><th className="num">Correct</th><th>Notes</th></tr>
+            <tr>
+              <Th label={T("อันดับ", "Rank")} w="9%" />
+              <Th label={T("เลขทีม", "Team No.")} w="10%" />
+              <Th label={T("ชื่อทีม", "Team")} w="35%" />
+              <Th label={T("คะแนน", "Score")} w="11%" />
+              <Th label={T("ตอบถูก", "Correct")} w="10%" />
+              <Th label={T("การตัดสินเสมอ", "Tie-break")} w="25%" />
+            </tr>
           </thead>
           <tbody>
             {through.map((r) => (
               <tr key={r.team_id}>
-                <td className="num">{r.rank}</td>
+                <td className="c">{r.rank}</td>
+                <td />
                 <td><b>{r.name}</b></td>
-                <td className="num">{r.score}</td>
-                <td className="num">{r.correct_count}</td>
-                <td className="small">{tieBreakNote(rows, rows.indexOf(r)) ?? ""}</td>
+                <td className="c">{r.score}</td>
+                <td className="c">{r.correct_count}</td>
+                <td className="tiny">{tieNoteL(rows, rows.indexOf(r), lang)}</td>
               </tr>
             ))}
           </tbody>
         </table>
-        {rows.length > through.length ? (
-          <p className="small muted" style={{ marginTop: 10 }}>
-            Next placed (did not qualify): {rows.filter((r) => !q.has(r.team_id)).slice(0, 5).map((r) => `#${r.rank} ${r.name} (${r.score})`).join(", ")}
+        {rest.length ? (
+          <p className="tiny muted">
+            {T("อันดับถัดไป (ไม่ผ่าน)", "Next placed (did not qualify)")}: {rest.map((r) => `#${r.rank} ${r.name} (${r.score})`).join(", ")}
           </p>
         ) : null}
       </>
     );
   }
 
-  function StandingsTable({ d }: { d: CompetitionDetail }) {
-    const hasQ = !!d.competition.qualification;
+  function StandingsTable() {
+    const hasQ = !!c.qualification;
     return (
-      <table>
+      <table className="ftable">
         <thead>
-          <tr><th className="num">Rank</th><th>Team</th><th className="num">Score</th><th className="num">Correct</th><th className="num">Time on correct</th>{hasQ ? <th>Qualified</th> : null}<th>Notes</th></tr>
+          <tr>
+            <Th label={T("อันดับ", "Rank")} w="7%" />
+            <Th label={T("ชื่อทีม", "Team")} w="29%" />
+            <Th label={T("คะแนน", "Score")} w="9%" />
+            <Th label={T("ตอบถูก", "Correct")} w="8%" />
+            <Th label={T("เวลาข้อที่ถูก", "Time on correct")} w="12%" />
+            {hasQ ? <Th label={T("ผลคัดเลือก", "Qualified")} w="9%" /> : null}
+            <Th label={T("หมายเหตุ", "Notes")} w={hasQ ? "26%" : "35%"} />
+          </tr>
         </thead>
         <tbody>
           {rows.map((r, i) => {
-            const flags = d.competition.teams.find((t) => t.team_id === r.team_id)?.flags.length ?? 0;
+            const flags = c.teams.find((t) => t.team_id === r.team_id)?.flags.length ?? 0;
             const cut = hasQ && q.has(r.team_id) && !q.has(rows[i + 1]?.team_id ?? "");
             return (
               <tr key={r.team_id} className={cut ? "cut" : undefined}>
-                <td className="num">{r.rank}</td>
+                <td className="c">{r.rank}</td>
                 <td>{r.name}</td>
-                <td className="num">{r.score}</td>
-                <td className="num">{r.correct_count}</td>
-                <td className="num">{seconds(r.total_correct_time_ms)}</td>
-                {hasQ ? <td className={q.has(r.team_id) ? "ok" : "muted"}>{q.has(r.team_id) ? "Yes" : "No"}</td> : null}
-                <td className="small">{[flags ? `${flags} anti-cheat flag${flags > 1 ? "s" : ""}` : "", tieBreakNote(rows, i) ?? ""].filter(Boolean).join(" · ")}</td>
+                <td className="c">{r.score}</td>
+                <td className="c">{r.correct_count}</td>
+                <td className="c">{secondsL(r.total_correct_time_ms, lang)}</td>
+                {hasQ ? <td className="c">{q.has(r.team_id) ? T("ผ่าน", "Yes") : T("ไม่ผ่าน", "No")}</td> : null}
+                <td className="tiny">{[flags ? T(`ธงกันโกง ${flags} ครั้ง`, `${flags} anti-cheat flag${flags > 1 ? "s" : ""}`) : "", tieNoteL(rows, i, lang)].filter(Boolean).join(" · ")}</td>
               </tr>
             );
           })}
@@ -198,56 +215,78 @@ export function CompetitionPrint({ id, kind, teamId }: { id: string; kind: Print
       </table>
     );
   }
-}
 
-function HostLog({ d }: { d: CompetitionDetail }) {
-  const items = timeline(d).filter((t) => t.warn || ["TIME_ADJUSTED", "ANSWERS_LOCKED_BY_HOST", "MARK_CHANGED", "MARK_CORRECTED", "TEAM_REMOVED", "TEAM_RENAMED", "DEVICE_MOVED", "TIE_BREAK_SHOWN", "QUALIFIED_TEAMS_SHOWN", "GAME_ENDED", "ROOM_DELETED"].includes(t.kind));
-  if (!items.length) return <p className="muted">Nothing unusual: no anti-cheat flags, no time changes, no marking changes and no questions locked early.</p>;
-  return (
-    <table>
-      <thead><tr><th>Time</th><th className="num">Q</th><th>Team</th><th>Event</th></tr></thead>
-      <tbody>
-        {items.map((t, i) => (
-          <tr key={i}>
-            <td className="num">{clock(t.at, true)}</td>
-            <td className="num">{t.question_index !== null ? t.question_index + 1 : ""}</td>
-            <td>{t.team ?? ""}</td>
-            <td className={t.warn ? "bad" : undefined}>{t.text}</td>
+  function HostLog() {
+    const kinds = ["TIME_ADJUSTED", "ANSWERS_LOCKED_BY_HOST", "MARK_CHANGED", "MARK_CORRECTED", "TEAM_REMOVED", "TEAM_RENAMED", "DEVICE_MOVED", "TIE_BREAK_SHOWN", "QUALIFIED_TEAMS_SHOWN", "GAME_ENDED", "ROOM_DELETED"];
+    const items = timelineL(d!, lang).filter((t) => t.warn || kinds.includes(t.kind));
+    if (!items.length) return <p className="muted">{T("ไม่มีเหตุการณ์ผิดปกติ: ไม่มีธงกันโกง ไม่มีการปรับเวลา ไม่มีการแก้การตรวจ และไม่มีข้อที่ปิดรับก่อนเวลา", "Nothing unusual: no anti-cheat flags, no time changes, no marking changes and no questions locked early.")}</p>;
+    return (
+      <table className="ftable">
+        <thead>
+          <tr>
+            <Th label={T("เวลา", "Time")} w="12%" />
+            <Th label={T("ข้อ", "Q")} w="6%" />
+            <Th label={T("ทีม", "Team")} w="22%" />
+            <Th label={T("เหตุการณ์", "Event")} w="60%" />
           </tr>
-        ))}
-      </tbody>
-    </table>
-  );
+        </thead>
+        <tbody>
+          {items.map((t, i) => (
+            <tr key={i}>
+              <td className="c">{clock(t.at, true)}</td>
+              <td className="c">{t.question_index !== null ? t.question_index + 1 : ""}</td>
+              <td>{t.team ?? ""}</td>
+              <td className={t.warn ? "tiny bad" : "tiny"}>{t.text}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
+  }
 }
 
-function TeamAnswers({ d, teamId }: { d: CompetitionDetail; teamId: string }) {
+function TeamAnswers({ d, teamId, lang }: { d: CompetitionDetail; teamId: string; lang: Lang }) {
+  const T = (th: string, en: string) => pick(lang, th, en);
   const lines = teamSheet(d, teamId);
   const row = standings(d).find((r) => r.team_id === teamId);
   return (
     <>
-      {row ? <p style={{ marginTop: 12 }}>Rank <b>{row.rank}</b> · <b>{row.score}</b> points · {row.correct_count} correct</p> : null}
-      <table>
+      {row ? (
+        <div className="fgrid g3">
+          <Field label={T("อันดับ", "Rank")} v={String(row.rank)} />
+          <Field label={T("คะแนน", "Score")} v={String(row.score)} />
+          <Field label={T("ตอบถูก (ข้อ)", "Correct answers")} v={String(row.correct_count)} />
+        </div>
+      ) : null}
+      <table className="ftable">
         <thead>
-          <tr><th className="num">Q</th><th>Question / accepted answers</th><th>Team's answer</th><th>Result and marking</th><th className="num">Sent</th><th className="num">Pts</th></tr>
+          <tr>
+            <Th label={T("ข้อ", "Q")} w="5%" />
+            <Th label={T("คำถาม / คำตอบที่ยอมรับ", "Question / accepted answers")} w="31%" />
+            <Th label={T("คำตอบของทีม", "Team's answer")} w="18%" />
+            <Th label={T("ผลและการตรวจ", "Result and marking")} w="26%" />
+            <Th label={T("ส่งเมื่อ", "Sent")} w="13%" />
+            <Th label={T("คะแนน", "Pts")} w="7%" />
+          </tr>
         </thead>
         <tbody>
           {lines.map(({ q, a, order }) => (
             <tr key={q.question_index}>
-              <td className="num">{q.question_index + 1}</td>
+              <td className="c">{q.question_index + 1}</td>
               <td>
                 <div className="q-text">{q.question.question_text}</div>
-                <div className="small ok">{acceptedText(q.question)}</div>
+                <div className="tiny ok">{acceptedText(q.question)}</div>
               </td>
               <td className="q-text">{a ? answerText(q.question, a) || "—" : "—"}</td>
-              <td className="small">
-                {a ? <b className={a.correct ? "ok" : verdict(a) === "PARTIAL" ? undefined : "bad"}>{VERDICT_LABEL[verdict(a)]}</b> : "Not recorded"}
-                {a ? <div>{markingNote(q.question, a)}</div> : null}
+              <td className="tiny">
+                {a ? <b className={a.correct ? "ok" : verdict(a) === "PARTIAL" ? undefined : "bad"}>{verdictLabel(verdict(a), lang)}</b> : T("ไม่มีบันทึก", "Not recorded")}
+                {a ? <div>{markingNoteL(q.question, a, lang)}</div> : null}
               </td>
-              <td className="num small">
-                {a?.answered ? `${clock(a.received_at, true)} (+${seconds(a.elapsed_ms)})` : "–"}
-                {order ? <div>{orderLabel(order)}</div> : null}
+              <td className="tiny c">
+                {a?.answered ? `${clock(a.received_at)} (+${secondsL(a.elapsed_ms, lang)})` : "–"}
+                {order ? <div>{orderLabelL(order, lang)}</div> : null}
               </td>
-              <td className="num">{a?.points ?? 0}</td>
+              <td className="c">{a?.points ?? 0}</td>
             </tr>
           ))}
         </tbody>
