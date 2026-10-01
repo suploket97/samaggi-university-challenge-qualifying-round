@@ -13,6 +13,6 @@ export default async function CompetitionPrintPage({
 }) {
   if (!(await isAdmin())) return <AdminLogin />;
   const sp = await searchParams;
-  const kind: PrintKind = sp.kind === "qualified" || sp.kind === "team" ? sp.kind : "full";
+  const kind: PrintKind = sp.kind === "qualified" || sp.kind === "team" || sp.kind === "official" ? sp.kind : "full";
   return <CompetitionPrint id={decodeURIComponent((await params).id)} kind={kind} teamId={sp.team ?? null} />;
 }

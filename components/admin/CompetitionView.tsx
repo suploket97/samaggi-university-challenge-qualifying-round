@@ -142,6 +142,7 @@ export function CompetitionView({ id }: { id: string }) {
       title={c.pack_title ?? "Competition"}
       actions={
         <>
+          <a href={printHref("official")} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary">🖨 Official record (F1 + F4)</Button></a>
           <a href={printHref("qualified")} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary">🖨 Qualified list</Button></a>
           <a href={printHref("full")} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary">🖨 Full report</Button></a>
           <Button size="sm" variant="secondary" loading={exporting === "xlsx"} onClick={exportExcel}>⬇ Excel</Button>

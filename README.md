@@ -260,6 +260,7 @@ Records are read-only and stay until you delete them. Open one to see **Standing
 a challenge on the spot), **Questions** (how many got each one right, common wrong answers) and **Timeline**.
 
 Downloads and printouts (use the browser's *Save as PDF* for a PDF; Thai prints correctly):
+- **Official record (F1 + F4)**: the official forms F1 (qualifying result certificate, with the full standings attached) and F4 (rulings and incidents log), filled in from the competition log in the same layout as the printed forms. Print, write in the team numbers, and sign
 - **Qualified list**: one page to hand to the afternoon organisers, with signature lines
 - **Full report**: standings, question summary, anti-cheat and host actions
 - **One team's answer sheet**: from the Teams' answers tab

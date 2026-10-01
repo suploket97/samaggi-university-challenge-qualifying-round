@@ -157,6 +157,38 @@ body {
 .paper .qblock img { max-height: 140px; max-width: 260px; margin-top: 6px; border: 1px solid #e4e4e7; }
 .paper .ans { margin-top: 4px; color: #047857; }
 .paper .blank { display: inline-block; min-width: 220px; border-bottom: 1px solid #999; height: 1.2em; }
+/* ---------- Official record forms (F1 / F4), same layout as the printed forms ---------- */
+.form-doc { max-width: 1040px; font-size: 11.5px; line-height: 1.35; }
+.form-page { display: flex; flex-direction: column; gap: 10px; padding: 18px 0 28px; border-bottom: 1px dashed #d4d4d8; }
+.fhead { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2.2px solid #111; padding-bottom: 6px; }
+.fbrand { font-family: var(--font-headline); font-size: 18px; letter-spacing: .06em; }
+.fbrand b { color: #d97706; font-weight: 400; }
+.form-doc h1.ftitle { font-family: var(--font-sans); font-size: 19px; font-weight: 700; letter-spacing: 0; line-height: 1.25; }
+.ftitle small { display: block; font-size: 14px; font-weight: 600; color: #5b5b66; }
+.fcode { font-weight: 700; background: #111; color: #fff; border-radius: 4px; padding: 3px 8px; }
+.fgrid { display: grid; gap: 7px; }
+.fgrid.g2 { grid-template-columns: repeat(2, 1fr); } .fgrid.g3 { grid-template-columns: repeat(3, 1fr); } .fgrid.g4 { grid-template-columns: repeat(4, 1fr); }
+.ffield { border: 1px solid #9a9aa4; border-radius: 2px; padding: 4px 7px; min-height: 40px; }
+.ffield.tall { min-height: 56px; }
+.flabel { display: block; font-size: 9px; color: #5b5b66; line-height: 1.2; margin-bottom: 2px; }
+.fval { font-size: 12.5px; font-weight: 600; }
+.fbox { border: 1px solid #111; border-radius: 3px; padding: 8px; }
+.fst { font-weight: 700; font-size: 12px; margin: 0 0 6px; }
+.fst small { font-weight: 600; color: #5b5b66; }
+.fline { margin: 0 0 5px; }
+.fck { display: inline-flex; align-items: center; gap: 4px; margin-right: 12px; white-space: nowrap; }
+.fck i { display: inline-grid; place-items: center; width: 12px; height: 12px; border: 1px solid #111; border-radius: 1px; font-style: normal; font-size: 10px; font-weight: 700; }
+.fck i.on { background: #111; color: #fff; }
+.fnote { font-size: 10px; color: #3f3f46; background: #fff7e6; border: 1px solid #f5c46b; border-radius: 3px; padding: 6px 8px; margin: 0; }
+.form-doc table.ftable { table-layout: fixed; margin: 0; }
+.form-doc .ftable th { font-size: 9px; font-weight: 700; text-transform: none; letter-spacing: 0; color: #111; background: #f1f1f4; border: 1px solid #9a9aa4; padding: 3px 4px; vertical-align: bottom; line-height: 1.2; }
+.form-doc .ftable th small { display: block; font-weight: 500; color: #5b5b66; }
+.form-doc .ftable td { border: 1px solid #9a9aa4; height: 24px; padding: 2px 4px; font-size: 11px; vertical-align: middle; overflow-wrap: anywhere; }
+.form-doc .ftable td.c { text-align: center; font-variant-numeric: tabular-nums; }
+.form-doc .ftable tr.cut td { border-bottom: 2.5px solid #111; }
+.form-doc .tiny { font-size: 9.5px; line-height: 1.3; }
+.ffoot { margin-top: auto; display: flex; justify-content: space-between; gap: 12px; font-size: 9px; color: #8a8a94; border-top: 1px solid #e2e2e8; padding-top: 4px; }
+@page landscape { size: A4 landscape; margin: 11mm 12mm; }
 @media print {
   @page { size: A4; margin: 14mm 12mm; }
   html, body { background: #fff !important; background-image: none !important; }
@@ -164,4 +196,8 @@ body {
   .paper { max-width: none; padding: 0; }
   .paper tr, .paper .keep { break-inside: avoid; }
   .paper .page-break { break-before: page; }
+  .form-page { border-bottom: none; padding: 0; break-after: page; min-height: 268mm; }
+  .form-page:last-child { break-after: auto; }
+  .form-page.landscape { page: landscape; min-height: 186mm; }
+  .form-doc .ftable tr { break-inside: avoid; }
 }

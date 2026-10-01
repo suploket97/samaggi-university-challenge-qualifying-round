@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/client/api";
 import type { CompetitionDetail } from "@/lib/competition/types";
+import { OfficialRecord } from "./OfficialRecord";
 import {
   SCORING_MODE_LABEL,
   VERDICT_LABEL,
@@ -22,7 +23,7 @@ import {
   verdict,
 } from "@/lib/competition/format";
 
-export type PrintKind = "qualified" | "full" | "team";
+export type PrintKind = "qualified" | "full" | "team" | "official";
 
 /**
  * Print-ready report on a white page. The browser's "Save as PDF" turns it
@@ -38,11 +39,13 @@ export function CompetitionPrint({ id, kind, teamId }: { id: string; kind: Print
   }, [id]);
 
   useEffect(() => {
-    if (d) document.title = `${kind === "qualified" ? "Qualified teams" : kind === "team" ? "Team answers" : "Competition report"} – ${d.competition.pack_title ?? d.competition.room_code}`;
+    if (d) document.title = `${kind === "qualified" ? "Qualified teams" : kind === "team" ? "Team answers" : kind === "official" ? "Official record F1-F4" : "Competition report"} – ${d.competition.pack_title ?? d.competition.room_code}`;
   }, [d, kind]);
 
   if (error) return <div className="paper-page"><div className="paper"><p className="bad">{error}</p></div></div>;
   if (!d) return <div className="paper-page"><div className="paper"><p className="muted">Loading…</p></div></div>;
+
+  if (kind === "official") return <OfficialRecord d={d} />;
 
   const c = d.competition;
   const rows = standings(d);
