@@ -3,11 +3,11 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/client/api";
 import type { CompetitionDetail } from "@/lib/competition/types";
 import { OfficialRecord } from "./OfficialRecord";
-import { acceptedText, answerText, clock, firstCorrect, qualifiedSet, standings, teamSheet, verdict } from "@/lib/competition/format";
+import { acceptedText, answerText, clock, firstCorrect, qualifiedSet, sendOrder, standings, teamSheet, verdict } from "@/lib/competition/format";
 import { dateL, markingNoteL, modeLabel, orderLabelL, pick, secondsL, tieNoteL, timelineL, verdictLabel, type Lang } from "@/lib/competition/i18n";
 import { Field, FormFoot, FormHead, Sigs, Th, Toolbar, useFormLang } from "./formkit";
 
-export type PrintKind = "qualified" | "full" | "team" | "official";
+export type PrintKind = "qualified" | "full" | "team" | "official" | "log";
 
 /**
  * Print-ready reports in the same layout as the official forms, in one
@@ -26,7 +26,7 @@ export function CompetitionPrint({ id, kind, teamId }: { id: string; kind: Print
 
   useEffect(() => {
     if (!d) return;
-    const name = kind === "qualified" ? "Qualified teams" : kind === "team" ? "Team answers" : kind === "official" ? "Official record F1-F4" : "Competition report";
+    const name = kind === "qualified" ? "Qualified teams" : kind === "team" ? "Team answers" : kind === "official" ? "Official record F1-F4" : kind === "log" ? "Full competition log" : "Competition report";
     document.title = `${name} – ${d.competition.pack_title ?? d.competition.room_code}`;
   }, [d, kind]);
 
@@ -39,16 +39,20 @@ export function CompetitionPrint({ id, kind, teamId }: { id: string; kind: Print
   const rows = standings(d);
   const q = qualifiedSet(d);
   const team = teamId ? c.teams.find((t) => t.team_id === teamId) : null;
-  const code = kind === "qualified" ? "R1" : kind === "full" ? "R2" : "R3";
+  const code = kind === "qualified" ? "R1" : kind === "full" ? "R2" : kind === "log" ? "R4" : "R3";
   const title =
-    kind === "qualified" ? T("รายชื่อทีมที่ผ่านการคัดเลือก", "Qualified teams") : kind === "team" ? T(`ใบคำตอบของทีม: ${team?.name ?? ""}`, `Answer sheet: ${team?.name ?? "team"}`) : T("รายงานผลการแข่งขัน", "Competition report");
+    kind === "qualified" ? T("รายชื่อทีมที่ผ่านการคัดเลือก", "Qualified teams") : kind === "team"
+        ? T(`ใบคำตอบของทีม: ${team?.name ?? ""}`, `Answer sheet: ${team?.name ?? "team"}`)
+        : kind === "log"
+          ? T("บันทึกการแข่งขันฉบับเต็ม", "Full competition log")
+          : T("รายงานผลการแข่งขัน", "Competition report");
 
   return (
     <div className="paper-page">
       <div className="paper form-doc">
         <Toolbar lang={lang} setLang={setLang} />
 
-        <section className="form-page flow">
+        <section className={kind === "log" ? "form-page flow landscape" : "form-page flow"}>
           <FormHead code={code} title={title} sub={T("รอบคัดเลือก", "Qualifying round")} lang={lang} />
           <div className="fgrid g4">
             <Field label={T("วันที่", "Date")} v={`${dateL(c.created_at, lang)} · ${clock(c.created_at)}`} />
@@ -77,48 +81,31 @@ export function CompetitionPrint({ id, kind, teamId }: { id: string; kind: Print
               <p className="fst">{T("ตารางคะแนนสุดท้าย", "Final standings")}</p>
               <StandingsTable />
               <p className="fst page-break">{T("คำถาม", "Questions")}</p>
-              <table className="ftable">
-                <thead>
-                  <tr>
-                    <Th label="#" w="5%" />
-                    <Th label={T("คำถาม", "Question")} w="34%" />
-                    <Th label={T("คำตอบที่ยอมรับ", "Accepted answers")} w="22%" />
-                    <Th label={T("ถูก/ตอบ", "Correct")} w="8%" />
-                    <Th label={T("เวลาและหมายเหตุ", "Timing and notes")} w="31%" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {d.questions.map((cq) => {
-                    const f = firstCorrect(cq);
-                    const notes = [
-                      `${clock(cq.started_at)}–${clock(cq.closed_at)} · ${secondsL(cq.effective.time_limit_sec * 1000, lang).replace(".0", "")}`,
-                      cq.closed_by === "HOST" ? T("พิธีกรปิดรับก่อนเวลา", "locked early by host") : "",
-                      cq.stats?.typo_accepted ? T(`ยอมรับคำพิมพ์ผิด ${cq.stats.typo_accepted} ทีม`, `${cq.stats.typo_accepted} accepted with typos`) : "",
-                      cq.stats?.overrides?.length
-                        ? T("พิธีกรตรวจ: ", "Host review: ") +
-                          cq.stats.overrides
-                            .map((o) => `${o.part !== null ? T(`ส่วนที่ ${o.part + 1}: `, `part ${o.part + 1}: `) : ""}${o.label} → ${o.verdict === "CORRECT" ? T("ถูก", "correct") : T("ผิด", "wrong")}`)
-                            .join("; ")
-                        : "",
-                      f ? T(`ตอบถูกคนแรก: ${f.names.join(", ")} (${secondsL(f.elapsed_ms, lang)})`, `First correct: ${f.names.join(", ")} (${secondsL(f.elapsed_ms, lang)})`) : "",
-                    ].filter(Boolean);
-                    return (
-                      <tr key={cq.question_index}>
-                        <td className="c">{cq.question_index + 1}</td>
-                        <td className="q-text">{cq.question.question_text}</td>
-                        <td className="tiny">{acceptedText(cq.question)}</td>
-                        <td className="c">{cq.stats ? `${cq.stats.correct}/${cq.stats.answered}` : "–"}</td>
-                        <td className="tiny">{notes.join(" · ")}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <QuestionsTable />
               <p className="fst">{T("ธงกันโกงและการดำเนินการของพิธีกร", "Anti-cheat and host actions")}</p>
               <HostLog />
               <p className="tiny muted">
                 {T("คำตอบรายทีมทั้งหมดอยู่ในไฟล์ Excel หรือพิมพ์ใบคำตอบของแต่ละทีมได้จาก Competition log", "Every team's individual answers are in the Excel download, or print one team's answer sheet from the Competition log.")}
               </p>
+            </>
+          ) : null}
+
+          {kind === "log" ? (
+            <>
+              <p className="tiny muted">
+                {T(
+                  "ทุกอย่างที่ระบบบันทึกไว้ในเกมนี้: ตารางคะแนน สรุปรายข้อ คำตอบของทุกทีมในทุกข้อ และไทม์ไลน์เหตุการณ์ทั้งหมด ตรงกับไฟล์ Excel ของเกมเดียวกัน (ดูรหัสตรวจสอบท้ายหน้า)",
+                  "Everything the system recorded for this game: standings, question summary, every team's answer to every question, and the complete timeline. It matches the Excel record of the same game (see the check code at the foot).",
+                )}
+              </p>
+              <p className="fst">{T("1. ตารางคะแนนสุดท้าย", "1. Final standings")}</p>
+              <StandingsTable />
+              <p className="fst page-break">{T("2. สรุปรายข้อ", "2. Questions")}</p>
+              <QuestionsTable />
+              <p className="fst page-break">{T("3. คำตอบของทุกทีม", "3. Every team's answers")}</p>
+              <AllAnswers />
+              <p className="fst page-break">{T("4. ไทม์ไลน์ทั้งหมด", "4. Complete timeline")}</p>
+              <FullTimeline />
             </>
           ) : null}
 
@@ -128,6 +115,133 @@ export function CompetitionPrint({ id, kind, teamId }: { id: string; kind: Print
       </div>
     </div>
   );
+
+  function QuestionsTable() {
+    return (
+    <table className="ftable">
+      <thead>
+        <tr>
+          <Th label="#" w="5%" />
+          <Th label={T("คำถาม", "Question")} w="34%" />
+          <Th label={T("คำตอบที่ยอมรับ", "Accepted answers")} w="22%" />
+          <Th label={T("ถูก/ตอบ", "Correct")} w="8%" />
+          <Th label={T("เวลาและหมายเหตุ", "Timing and notes")} w="31%" />
+        </tr>
+      </thead>
+      <tbody>
+        {d!.questions.map((cq) => {
+          const f = firstCorrect(cq);
+          const notes = [
+            `${clock(cq.started_at)}–${clock(cq.closed_at)} · ${secondsL(cq.effective.time_limit_sec * 1000, lang).replace(".0", "")}`,
+            cq.closed_by === "HOST" ? T("พิธีกรปิดรับก่อนเวลา", "locked early by host") : "",
+            cq.stats?.typo_accepted ? T(`ยอมรับคำพิมพ์ผิด ${cq.stats.typo_accepted} ทีม`, `${cq.stats.typo_accepted} accepted with typos`) : "",
+            cq.stats?.overrides?.length
+              ? T("พิธีกรตรวจ: ", "Host review: ") +
+                cq.stats.overrides
+                  .map((o) => `${o.part !== null ? T(`ส่วนที่ ${o.part + 1}: `, `part ${o.part + 1}: `) : ""}${o.label} → ${o.verdict === "CORRECT" ? T("ถูก", "correct") : T("ผิด", "wrong")}`)
+                  .join("; ")
+              : "",
+            f ? T(`ตอบถูกคนแรก: ${f.names.join(", ")} (${secondsL(f.elapsed_ms, lang)})`, `First correct: ${f.names.join(", ")} (${secondsL(f.elapsed_ms, lang)})`) : "",
+          ].filter(Boolean);
+          return (
+            <tr key={cq.question_index}>
+              <td className="c">{cq.question_index + 1}</td>
+              <td className="q-text">{cq.question.question_text}</td>
+              <td className="tiny">{acceptedText(cq.question)}</td>
+              <td className="c">{cq.stats ? `${cq.stats.correct}/${cq.stats.answered}` : "–"}</td>
+              <td className="tiny">{notes.join(" · ")}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+    );
+  }
+
+  function AllAnswers() {
+    return (
+      <>
+        {d!.questions.map((cq) => {
+          const order = sendOrder(cq);
+          const res = [...(cq.results ?? [])].sort((x, y) => (order.get(x.team_id)?.pos ?? 9999) - (order.get(y.team_id)?.pos ?? 9999) || x.team_name.localeCompare(y.team_name));
+          return (
+            <div key={cq.question_index} className="keep-head">
+              <p className="fline" style={{ marginTop: 8 }}>
+                <b>{T(`ข้อ ${cq.question_index + 1}`, `Q${cq.question_index + 1}`)}</b> · <span className="q-text">{cq.question.question_text}</span>
+              </p>
+              <p className="tiny ok" style={{ margin: "0 0 4px" }}>{T("คำตอบที่ยอมรับ", "Accepted")}: {acceptedText(cq.question)}</p>
+              {res.length ? (
+                <table className="ftable">
+                  <thead>
+                    <tr>
+                      <Th label={T("ลำดับส่ง", "Order")} w="6%" />
+                      <Th label={T("ทีม", "Team")} w="15%" />
+                      <Th label={T("คำตอบ", "Answer")} w="19%" />
+                      <Th label={T("ผล", "Result")} w="9%" />
+                      <Th label={T("การตรวจ", "How it was marked")} w="25%" />
+                      <Th label={T("คะแนน (โบนัส)", "Points (bonus)")} w="8%" />
+                      <Th label={T("ส่งเมื่อ", "Sent")} w="10%" />
+                      <Th label={T("ธง", "Flags")} w="8%" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {res.map((a) => (
+                      <tr key={a.team_id}>
+                        <td className="c">{order.get(a.team_id)?.pos ?? "–"}</td>
+                        <td>{a.team_name}</td>
+                        <td className="q-text">{answerText(cq.question, a) || "—"}</td>
+                        <td className="tiny"><b className={a.correct ? "ok" : verdict(a) === "PARTIAL" ? undefined : "bad"}>{verdictLabel(verdict(a), lang)}</b></td>
+                        <td className="tiny">{markingNoteL(cq.question, a, lang)}</td>
+                        <td className="c">{a.points}{a.speed_bonus ? ` (+${a.speed_bonus})` : ""}</td>
+                        <td className="tiny c">{a.answered ? `${clock(a.received_at, true)} (+${secondsL(a.elapsed_ms, lang)})` : "–"}</td>
+                        <td className="tiny">
+                          {a.flags.map((f) =>
+                            f.kind === "PASTE_ATTEMPT"
+                              ? T("วางข้อความ", "paste")
+                              : f.kind === "WINDOW_BLUR"
+                                ? T(`หน้าต่างอื่น ${secondsL(f.duration_ms ?? 0, lang)}`, `other window ${secondsL(f.duration_ms ?? 0, lang)}`)
+                                : T(`ออกจากจอ ${secondsL(f.duration_ms ?? 0, lang)}`, `left ${secondsL(f.duration_ms ?? 0, lang)}`),
+                          ).join("; ")}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="tiny muted">{T("ไม่มีคำตอบ (ยังไม่ได้เฉลยข้อนี้)", "No answers recorded (this question wasn't revealed).")}</p>
+              )}
+            </div>
+          );
+        })}
+      </>
+    );
+  }
+
+  function FullTimeline() {
+    const items = timelineL(d!, lang);
+    return (
+      <table className="ftable">
+        <thead>
+          <tr>
+            <Th label={T("เวลา", "Time")} w="11%" />
+            <Th label={T("ข้อ", "Q")} w="5%" />
+            <Th label={T("ทีม", "Team")} w="18%" />
+            <Th label={T("เหตุการณ์", "Event")} w="66%" />
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((t, i) => (
+            <tr key={i}>
+              <td className="c">{clock(t.at, true)}</td>
+              <td className="c">{t.question_index !== null ? t.question_index + 1 : ""}</td>
+              <td>{t.team ?? ""}</td>
+              <td className={t.warn ? "tiny bad" : "tiny"}>{t.text}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
+  }
 
   function Qualified() {
     if (!c.qualification) {

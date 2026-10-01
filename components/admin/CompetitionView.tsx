@@ -145,6 +145,7 @@ export function CompetitionView({ id }: { id: string }) {
           <a href={printHref("official")} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary">🖨 Official record (F1 + F4)</Button></a>
           <a href={printHref("qualified")} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary">🖨 Qualified list</Button></a>
           <a href={printHref("full")} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary">🖨 Full report</Button></a>
+          <a href={printHref("log")} target="_blank" rel="noreferrer"><Button size="sm" variant="secondary">🖨 Full log</Button></a>
           <Button size="sm" variant="secondary" loading={exporting === "xlsx"} onClick={exportExcel}>⬇ Excel</Button>
           <Button size="sm" variant="ghost" onClick={() => downloadCsv(`${name}-answers.csv`, answerRows(data))}>⬇ CSV</Button>
         </>

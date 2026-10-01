@@ -260,7 +260,7 @@ Records are read-only and stay until you delete them. Open one to see **Standing
 a challenge on the spot), **Questions** (how many got each one right, common wrong answers) and **Timeline**.
 
 Downloads and printouts (use the browser's *Save as PDF* for a PDF; Thai prints correctly):
-Every printout uses the same layout as the official record forms and prints in **one language at a time**: choose ภาษาไทย or English at the top of the print page (or add `&lang=th` / `&lang=en` to its address). Codes: F1/F4 official record, R1 qualified list, R2 full report, R3 team answer sheet, Q1 question sheet with answers, Q2 questions only (paper backup, with boxes for the team).
+Every printout uses the same layout as the official record forms and prints in **one language at a time**: choose ภาษาไทย or English at the top of the print page (or add `&lang=th` / `&lang=en` to its address). Codes: F1/F4 official record, R1 qualified list, R2 full report, R3 team answer sheet, R4 full competition log (landscape: standings, questions, every team's answer to every question, complete timeline), Q1 question sheet with answers, Q2 questions only (paper backup, with boxes for the team).
 - **Official record (F1 + F4)**: the official forms F1 (qualifying result certificate, with the full standings attached) and F4 (rulings and incidents log), filled in from the competition log in the same layout as the printed forms, in Thai or in English (switch at the top; labels and filled-in details are always in the same language). Print, write in the team numbers, and sign
 - **Qualified list**: one page to hand to the afternoon organisers, with signature lines
 - **Full report**: standings, question summary, anti-cheat and host actions
