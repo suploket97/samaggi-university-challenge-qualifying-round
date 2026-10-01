@@ -135,11 +135,25 @@ export async function clearFailures(req: Request): Promise<void> {
 
 // ----- Teams -----------------------------------------------------------------
 
-export function teamToken(roomCode: string, teamId: string): string {
-  return sign(`team:${roomCode}:${teamId}`);
+/** device 0 is the device the team joined on; each move to a new device gets the next number. */
+export function teamToken(roomCode: string, teamId: string, device = 0): string {
+  return sign(device ? `team:${roomCode}:${teamId}:${device}` : `team:${roomCode}:${teamId}`);
 }
 
-export function verifyTeamToken(roomCode: string, teamId: string, token: string): boolean {
-  if (!teamId || !token) return false;
-  return safeEqual(token, teamToken(roomCode, teamId));
+export function verifyTeamToken(roomCode: string, teamId: string, token: string, device = 0): boolean {
+  if (!teamId || !token || !Number.isInteger(device) || device < 0) return false;
+  return safeEqual(token, teamToken(roomCode, teamId, device));
+}
+
+// Wrong move-to-new-device codes, counted per room (everyone at the venue may share one IP).
+const MAX_TRANSFER_FAILS = 20;
+const transferKey = (roomCode: string) => `transfer:fails:${roomCode}`;
+
+export async function transferBlocked(roomCode: string): Promise<boolean> {
+  return Number((await getRedis().get(transferKey(roomCode))) ?? 0) >= MAX_TRANSFER_FAILS;
+}
+
+export async function recordTransferFail(roomCode: string): Promise<void> {
+  const n = await getRedis().incr(transferKey(roomCode));
+  if (n === 1) await getRedis().expire(transferKey(roomCode), FAIL_WINDOW_SEC);
 }

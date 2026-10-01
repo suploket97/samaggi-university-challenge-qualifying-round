@@ -46,6 +46,8 @@ export interface TeamSession {
   team_id: string;
   token: string;
   name: string;
+  /** Set when the team was moved to this device by the host (see /api/rooms/[code]/rejoin). */
+  device?: number;
 }
 
 const key = (code: string) => `pq:team:${code}`;
@@ -76,5 +78,5 @@ export function clearSession(code: string) {
 }
 
 export function teamHeaders(s: TeamSession): Record<string, string> {
-  return { "x-team-id": s.team_id, "x-team-token": s.token };
+  return { "x-team-id": s.team_id, "x-team-token": s.token, ...(s.device ? { "x-team-device": String(s.device) } : {}) };
 }

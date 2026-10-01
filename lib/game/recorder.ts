@@ -81,10 +81,19 @@ export interface ReviewEvent {
   teams: string[];
 }
 
+/** A marking change on a question that was already revealed (a challenge upheld), with the points it moved. */
+export interface CorrectionEvent extends ReviewEvent {
+  changes: { team_id: string; name: string; before: number; after: number }[];
+}
+
 export interface GameRecorder {
   onTransition(input: RecordInput): Promise<void>;
   onRoomDeleted(state: RoomState, at: number): Promise<void>;
   onReview?(state: RoomState, at: number, ev: ReviewEvent): Promise<void>;
+  /** After a correction: the event, plus the question's answers as now marked (to replace the saved results). */
+  onCorrection?(state: RoomState, at: number, ev: CorrectionEvent, data: { question: BankQuestion; answers: AnswerRecord[]; overrides: MarkOverride[] }): Promise<void>;
+  /** Other host actions worth keeping (team renamed, removed, moved to a new device). */
+  onEvent?(state: RoomState, at: number, kind: string, questionIndex: number | null, detail: unknown): Promise<void>;
 }
 
 export const noopRecorder: GameRecorder = {

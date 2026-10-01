@@ -11,7 +11,20 @@ import { Card, ErrorNote, cx } from "@/components/ui";
  * A decision covers every team that sent that answer, including teams that
  * answer later, and is written to the competition log straight away.
  */
-export function ReviewPanel({ code, review, onChange }: { code: string; review: ReviewPayload; onChange: (r: ReviewPayload) => void }) {
+export interface ScoreChange { team_id: string; name: string; before: number; after: number }
+
+export function ReviewPanel({
+  code, review, onChange, after = false, onApplied, header,
+}: {
+  code: string;
+  review: ReviewPayload;
+  onChange: (r: ReviewPayload) => void;
+  /** Correcting a question that was already revealed (a challenge upheld): scores change straight away. */
+  after?: boolean;
+  onApplied?: (changes: ScoreChange[], label: string) => void;
+  /** Replaces the title row (used by the correction card for its question picker). */
+  header?: React.ReactNode;
+}) {
   const [filter, setFilter] = useState<"all" | "wrong" | "right" | "changed">("all");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -22,11 +35,12 @@ export function ReviewPanel({ code, review, onChange }: { code: string; review: 
     setBusy(g.key);
     setError(null);
     try {
-      const r = await api<{ review: ReviewPayload }>(`/api/admin/rooms/${code}/review`, {
+      const r = await api<{ review: ReviewPayload; changes?: ScoreChange[] }>(`/api/admin/rooms/${code}/${after ? "correct" : "review"}`, {
         method: "POST",
         json: { question_index: review.question_index, key: g.key, verdict },
       });
       onChange(r.review);
+      if (after) onApplied?.(r.changes ?? [], g.label);
     } catch (e) {
       setError((e as ApiError).message);
     } finally {
@@ -47,18 +61,24 @@ export function ReviewPanel({ code, review, onChange }: { code: string; review: 
 
   return (
     <Card className="p-5">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-headline text-xl font-bold">Check answers before the reveal</h2>
-        <p className="text-sm text-muted tabular">
-          {review.answered} answered · {review.changes} change{review.changes === 1 ? "" : "s"} · updates live
-        </p>
-      </div>
+      {header ?? (
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="font-headline text-xl font-bold">Check answers before the reveal</h2>
+          <p className="text-sm text-muted tabular">
+            {review.answered} answered · {review.changes} change{review.changes === 1 ? "" : "s"} · updates live
+          </p>
+        </div>
+      )}
+      {after && review.question_text ? <p className="mt-2 font-semibold">Q{review.question_index + 1}. {review.question_text}</p> : null}
       <p className="mt-1 text-sm text-muted">
         {isChoice
           ? "Mark a choice right or wrong to change the answer key for this question. It applies to every team that picked it."
           : isSequence
           ? "Identical answers are grouped. Part-right answers get their share of the points automatically; ✔ Right gives full points, ✘ Wrong gives none."
+          : after
+          ? "Identical answers are grouped. Marking a group applies to every team that sent it."
           : "Identical answers are grouped. Marking a group applies to every team that sent it, including teams that answer later."}{" "}
+        {after ? <b className="text-gold">Scores change as soon as you press a button. </b> : null}
         Every change is saved in the competition log.
       </p>
 
@@ -82,7 +102,7 @@ export function ReviewPanel({ code, review, onChange }: { code: string; review: 
       <div className="mt-2"><ErrorNote>{error}</ErrorNote></div>
 
       {review.groups.length === 0 ? (
-        <p className="mt-4 text-muted">No answers yet. They appear here as they arrive.</p>
+        <p className="mt-4 text-muted">{after ? "No team answered this question." : "No answers yet. They appear here as they arrive."}</p>
       ) : (
         <div className="mt-3 max-h-[60vh] space-y-4 overflow-y-auto pr-1">
           {sections.map((sec, si) => (

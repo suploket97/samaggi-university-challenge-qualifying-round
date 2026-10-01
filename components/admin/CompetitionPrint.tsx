@@ -198,7 +198,7 @@ export function CompetitionPrint({ id, kind, teamId }: { id: string; kind: Print
 }
 
 function HostLog({ d }: { d: CompetitionDetail }) {
-  const items = timeline(d).filter((t) => t.warn || ["TIME_ADJUSTED", "ANSWERS_LOCKED_BY_HOST", "MARK_CHANGED", "QUALIFIED_TEAMS_SHOWN", "GAME_ENDED", "ROOM_DELETED"].includes(t.kind));
+  const items = timeline(d).filter((t) => t.warn || ["TIME_ADJUSTED", "ANSWERS_LOCKED_BY_HOST", "MARK_CHANGED", "MARK_CORRECTED", "TEAM_REMOVED", "TEAM_RENAMED", "DEVICE_MOVED", "TIE_BREAK_SHOWN", "QUALIFIED_TEAMS_SHOWN", "GAME_ENDED", "ROOM_DELETED"].includes(t.kind));
   if (!items.length) return <p className="muted">Nothing unusual: no anti-cheat flags, no time changes, no marking changes and no questions locked early.</p>;
   return (
     <table>

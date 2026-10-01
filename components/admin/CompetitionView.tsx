@@ -369,7 +369,7 @@ function TeamsTab({ d, teamId, setTeamId }: { d: CompetitionDetail; teamId: stri
                   {a && (!a.correct || a.voided) ? <p className="mt-1 text-xs text-muted">Accepted: <span className="text-good">{acceptedText(q.question)}</span></p> : null}
                   {a?.flags.length ? (
                     <p className="mt-1 text-xs text-bad">
-                      ⚠ {a.flags.map((f) => (f.kind === "PASTE_ATTEMPT" ? `tried to paste at ${clock(f.at)}` : `left the screen for ${seconds(f.duration_ms ?? 0)} at ${clock(f.at)}`)).join("; ")}
+                      ⚠ {a.flags.map((f) => (f.kind === "PASTE_ATTEMPT" ? `tried to paste at ${clock(f.at)}` : f.kind === "WINDOW_BLUR" ? `another window in front for ${seconds(f.duration_ms ?? 0)} (flag only)` : `left the screen for ${seconds(f.duration_ms ?? 0)} at ${clock(f.at)}`)).join("; ")}
                     </p>
                   ) : null}
                 </Card>

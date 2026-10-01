@@ -1,5 +1,7 @@
 import "server-only";
-import type { GameRecorder, RecordInput, ReviewEvent } from "@/lib/game/recorder";
+import type { AnswerRecord, CorrectionEvent, GameRecorder, RecordInput, ReviewEvent } from "@/lib/game/recorder";
+import type { BankQuestion } from "@/lib/game/types";
+import type { MarkOverride } from "@/lib/game/scoring";
 import { competitionId, questionStats } from "@/lib/game/recorder";
 import type { RoomState, Team } from "@/lib/game/types";
 import { getSupabaseAdmin } from "./supabase";
@@ -47,6 +49,31 @@ export class SupabaseRecorder implements GameRecorder {
   /** A host marking change during the review: logged straight away, before the reveal. */
   async onReview(state: RoomState, at: number, ev: ReviewEvent) {
     await this.withTables(() => this.event(competitionId(state), at, "MARK_CHANGED", ev.question_index, ev));
+  }
+
+  /** A challenge upheld after the reveal: the question's saved results and the standings are replaced, and the change is logged. */
+  async onCorrection(state: RoomState, at: number, ev: CorrectionEvent, data: { question: BankQuestion; answers: AnswerRecord[]; overrides: MarkOverride[] }) {
+    await this.withTables(async () => {
+      const db = getSupabaseAdmin();
+      const id = competitionId(state);
+      const stats = questionStats(data.question, data.answers, data.overrides);
+      check(
+        "save corrected results",
+        await db.from("competition_questions").update({ results: data.answers, stats }).eq("competition_id", id).eq("question_index", ev.question_index),
+      );
+      check("save standings", await db.from("competitions").update({ standings: state.leaderboard, updated_at: iso(at) }).eq("competition_id", id));
+      await this.event(id, at, "MARK_CORRECTED", ev.question_index, ev);
+    });
+  }
+
+  async onEvent(state: RoomState, at: number, kind: string, questionIndex: number | null, detail: unknown) {
+    await this.withTables(async () => {
+      const db = getSupabaseAdmin();
+      const id = competitionId(state);
+      const { data } = await db.from("competitions").select("competition_id").eq("competition_id", id).maybeSingle();
+      if (!data) return; // before a pack was chosen there is no log yet
+      await this.event(id, at, kind, questionIndex, detail);
+    });
   }
 
   /** Databases set up before the log existed get the new tables on first use. */
@@ -177,6 +204,17 @@ export class SupabaseRecorder implements GameRecorder {
       case "SHOW_LEADERBOARD":
         await this.event(id, at, "LEADERBOARD_SHOWN", qi, null);
         return;
+
+      case "SHOW_TIE_BREAK": {
+        const tb = next.tie_break;
+        await this.event(id, at, "TIE_BREAK_SHOWN", qi, {
+          qualify_count: command.qualify_count,
+          score: tb?.score ?? null,
+          decided_by: tb?.decided_by ?? null,
+          teams: (tb?.rows ?? []).map((r) => ({ team_id: r.team_id, name: r.name, correct_count: r.correct_count, total_correct_time_ms: r.total_correct_time_ms, qualified: r.qualified })),
+        });
+        return;
+      }
 
       case "SHOW_QUALIFICATION":
         check(

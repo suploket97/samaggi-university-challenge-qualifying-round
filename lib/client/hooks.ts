@@ -187,7 +187,7 @@ export function usePoll<T>(url: string | null, intervalMs: number, active = true
 export function useAntiCheat(opts: {
   active: boolean;
   thresholdMs: number;
-  report: (durationMs: number, kind: "FOCUS_LOST" | "PASTE_ATTEMPT") => void;
+  report: (durationMs: number, kind: "FOCUS_LOST" | "PASTE_ATTEMPT" | "WINDOW_BLUR") => void;
 }) {
   const { active, thresholdMs, report } = opts;
   const reportRef = useRef(report);
@@ -216,13 +216,35 @@ export function useAntiCheat(opts: {
     };
     const block = (e: Event) => e.preventDefault();
 
+    // Computers: another window in front of a quiz page that is still visible. Only flagged
+    // for the judges (a click on the taskbar or address bar looks the same), never voided.
+    let blurAt: number | null = null;
+    const onBlur = () => {
+      if (document.visibilityState === "visible") blurAt = Date.now();
+    };
+    const onFocus = () => {
+      if (blurAt === null) return;
+      const d = Date.now() - blurAt;
+      blurAt = null;
+      if (document.visibilityState === "visible" && d >= thresholdMs) reportRef.current(d, "WINDOW_BLUR");
+    };
+    const onHide = () => {
+      if (document.visibilityState === "hidden") blurAt = null; // counted as leaving the screen instead
+    };
+
     document.addEventListener("visibilitychange", onVis);
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
     document.addEventListener("copy", block);
     document.addEventListener("cut", block);
     document.addEventListener("contextmenu", block);
     return () => {
       if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVis);
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
       document.removeEventListener("copy", block);
       document.removeEventListener("cut", block);
       document.removeEventListener("contextmenu", block);

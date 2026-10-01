@@ -2,6 +2,7 @@
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import type { ScoreRow } from "@/lib/game/types";
+import { rowsByScore } from "@/lib/game/scoring";
 import { cx } from "./ui";
 import { Odometer } from "./Odometer";
 
@@ -10,14 +11,19 @@ import { Odometer } from "./Odometer";
  * visibly overtake each other.
  */
 export function Leaderboard({
-  rows, limit = 10, highlight, final = false,
+  rows: input, limit = 10, highlight, final = false, byScore = false,
 }: {
   rows: ScoreRow[];
   limit?: number;
   highlight?: string;
   /** The standings after the last question: medal colours for the top three. */
   final?: boolean;
+  /** Position by score alone, "4=" for shared scores, tied teams by name: the tie-break is shown separately. */
+  byScore?: boolean;
 }) {
+  const scored = byScore ? rowsByScore(input) : null;
+  const rows: ScoreRow[] = scored ? scored.map((r) => ({ ...r, rank: r.position })) : input;
+  const shared = new Set(scored?.filter((r) => r.shared).map((r) => r.team_id) ?? []);
   const [settled, setSettled] = useState(false);
   // Replay the animation only when the standings really change, not on every re-render.
   const rowsKey = rows.map((r) => `${r.team_id}:${r.score}:${r.rank}`).join("|");
@@ -64,8 +70,8 @@ export function Leaderboard({
               animate={{ width: settled ? `${(r.score / top) * 100}%` : "0%" }}
               transition={{ duration: 0.9, ease: "easeOut" }}
             />
-            <span className={cx("relative grid h-11 w-11 shrink-0 place-items-center rounded-xl font-mono text-xl font-bold tabular", medal)}>
-              {settled ? r.rank : r.previous_rank ?? "–"}
+            <span className={cx("relative grid h-11 min-w-11 shrink-0 px-1.5 place-items-center rounded-xl font-mono text-xl font-bold tabular", medal)}>
+              {settled ? `${r.rank}${shared.has(r.team_id) ? "=" : ""}` : r.previous_rank ?? "–"}
             </span>
             <span className="relative flex-1 truncate font-headline text-xl font-semibold md:text-2xl">{r.name}</span>
             {settled && move !== 0 ? (

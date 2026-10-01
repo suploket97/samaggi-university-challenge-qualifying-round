@@ -175,6 +175,7 @@ export function PhaseBadge({ phase }: { phase: string }) {
     SUBMITTED_WAITING: "bg-sky/20 text-sky",
     REVEAL_ANSWER: "bg-gold/20 text-gold",
     LEADERBOARD: "bg-violet/20 text-violet",
+    TIE_BREAK: "bg-gold/20 text-gold",
     QUALIFICATION_REVEAL: "bg-violet/20 text-violet",
     ENDED: "bg-white/10 text-muted",
   };

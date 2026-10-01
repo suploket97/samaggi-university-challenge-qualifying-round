@@ -152,6 +152,7 @@ export type RoomPhase =
   | "SUBMITTED_WAITING" // question closed, answers sealed, awaiting reveal
   | "REVEAL_ANSWER" // correct answer + per-team results shown
   | "LEADERBOARD" // stage shows standings
+  | "TIE_BREAK" // teams level on score at the qualification cut: how the tie-break settled it
   | "QUALIFICATION_REVEAL" // top X teams pass
   | "ENDED"; // room closed
 
@@ -162,11 +163,28 @@ export interface Team {
   /** Set by anti-cheat. A frozen team's answer for the current question is voided. */
   flags: AntiCheatFlag[];
   frozen_for_question: number | null;
+  /** Bumped each time the host moves the team to a new device; older devices' tokens stop working. */
+  device?: number;
+  /** One-time code the host issued to move the team to a new device. */
+  transfer?: { code: string; expires_at: number } | null;
+}
+
+/**
+ * What each team got for a question at its reveal (kept in the live room), so
+ * the host can correct the marking afterwards and the scores can be adjusted.
+ */
+export interface QuestionResultRecord {
+  started_at: number;
+  ends_at: number;
+  /** Teams locked out of this question by anti-cheat. */
+  voided: string[];
+  results: Record<string, { points: number; correct: boolean; elapsed_ms: number | null }>;
 }
 
 export interface AntiCheatFlag {
   question_index: number;
-  kind: "FOCUS_LOST" | "PASTE_ATTEMPT";
+  /** WINDOW_BLUR: the quiz page stayed visible but another window had the focus (computers). Flag only, never voids. */
+  kind: "FOCUS_LOST" | "PASTE_ATTEMPT" | "WINDOW_BLUR";
   duration_ms?: number;
   at: number;
 }
@@ -237,6 +255,19 @@ export interface RevealPayload {
   answer_distribution: Record<string, number> | null; // MCQ only: choice -> count
 }
 
+/**
+ * Teams level on score at the qualification cut, and how the tie-break
+ * (correct answers, then total time on correct answers) separated them.
+ * NONE = level on all three, so every team in the group qualifies.
+ */
+export interface TieBreakPayload {
+  qualify_count: number;
+  score: number;
+  decided_by: "CORRECT" | "TIME" | "NONE";
+  /** The tied group in final order, each marked qualified or not. */
+  rows: (ScoreRow & { qualified: boolean })[];
+}
+
 export interface QualificationPayload {
   qualify_count: number;
   qualified_team_ids: string[];
@@ -262,6 +293,8 @@ export interface RoomState {
   reveal: RevealPayload | null;
   leaderboard: ScoreRow[];
   qualification: QualificationPayload | null;
+  /** Set by SHOW_TIE_BREAK; kept so the qualification step can explain the cut. */
+  tie_break?: TieBreakPayload | null;
   /** Host's remote control for the question's sound or video on the big screen. seq increases on every press. */
   media?: MediaControl | null;
   settings: RoomSettings;
@@ -317,6 +350,7 @@ export type AdminCommand =
   | { type: "END_QUESTION" } // close early, before the timer ends
   | { type: "REVEAL_ANSWER" }
   | { type: "SHOW_LEADERBOARD" }
+  | { type: "SHOW_TIE_BREAK"; qualify_count: number } // only when teams are level on score at the cut
   | { type: "SHOW_QUALIFICATION"; qualify_count: number }
   | { type: "MEDIA"; action: MediaControl["action"] } // play/pause the question's sound or video on the stage
   | { type: "TERMINATE" };

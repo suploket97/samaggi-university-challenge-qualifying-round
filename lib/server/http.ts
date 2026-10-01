@@ -50,9 +50,14 @@ export async function requireAdmin(): Promise<Response | null> {
   return (await isAdmin()) ? null : fail(401, "Admin login required", "UNAUTHORIZED");
 }
 
-/** Reads x-team-id / x-team-token headers and checks them. */
-export function teamFromRequest(req: Request, code: string): string | null {
+/** Reads x-team-id / x-team-token / x-team-device headers and checks them. */
+export function teamAuth(req: Request, code: string): { team_id: string; device: number } | null {
   const id = req.headers.get("x-team-id") ?? "";
   const token = req.headers.get("x-team-token") ?? "";
-  return verifyTeamToken(code, id, token) ? id : null;
+  const device = Number(req.headers.get("x-team-device") ?? 0) || 0;
+  return verifyTeamToken(code, id, token, device) ? { team_id: id, device } : null;
+}
+
+export function teamFromRequest(req: Request, code: string): string | null {
+  return teamAuth(req, code)?.team_id ?? null;
 }

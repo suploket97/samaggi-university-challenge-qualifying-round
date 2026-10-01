@@ -10,6 +10,7 @@ import { Button, ConnectionDot, LoadingDots, Logo, Spinner, cx, inputClass } fro
 import { ChoiceBadge, QuestionMedia, SafeImage, TimerBar, ZoomOverlay, choiceTileStyle, phoneQuestionSize } from "@/components/game";
 import { Particles } from "@/components/Particles";
 import { Odometer } from "@/components/Odometer";
+import { formatTieTime } from "@/components/TieBreak";
 import { GRIP, arrayMove, useSortable } from "@/lib/client/useSortable";
 
 interface MeResponse {
@@ -57,7 +58,7 @@ function PlayerController({ code, session }: { code: string; session: TeamSessio
     } catch (e) {
       if ((e as ApiError).status === 401) {
         clearSession(code);
-        router.replace(`/play?code=${code}`);
+        router.replace(`/play?code=${code}&gone=${(e as ApiError).code === "TEAM_MOVED" ? "moved" : "removed"}`);
       }
       throw e;
     }
@@ -86,7 +87,7 @@ function PlayerController({ code, session }: { code: string; session: TeamSessio
 
   // Anti-cheat while answering.
   const report = useCallback(
-    (duration: number, kind: "FOCUS_LOST" | "PASTE_ATTEMPT") => {
+    (duration: number, kind: "FOCUS_LOST" | "PASTE_ATTEMPT" | "WINDOW_BLUR") => {
       const qIndex = idx;
       fetch(`/api/rooms/${code}/focus`, {
         method: "POST",
@@ -123,7 +124,11 @@ function PlayerController({ code, session }: { code: string; session: TeamSessio
     } catch (e) {
       const ae = e as ApiError;
       const body = (ae.body ?? {}) as { reason?: string; message?: string };
-      if (body.reason === "FROZEN") {
+      if (ae.status === 401) {
+        // Moved to another device by the host, or removed from the game.
+        clearSession(code);
+        router.replace(`/play?code=${code}&gone=${body.reason === "TEAM_MOVED" ? "moved" : "removed"}`);
+      } else if (body.reason === "FROZEN") {
         setFrozenIndex(qIndex);
       } else if (body.reason === "NOT_ACCEPTING") {
         setNotice(body.message ?? "Too late — answers are locked.");
@@ -139,6 +144,11 @@ function PlayerController({ code, session }: { code: string; session: TeamSessio
   }
 
   const row = snapshot?.leaderboard.find((r) => r.team_id === session.team_id);
+  // At the end, don't give the tie-break away in the header: position by score ("#4=") until the qualified teams are shown.
+  const headerRank =
+    view?.screen === "STANDING" ? `#${view.rank ?? "–"}${view.shared ? "=" : ""}`
+    : view?.screen === "TIE_BREAK" ? null
+    : row ? `#${row.rank}` : null;
 
   return (
     <div className="no-select flex min-h-dvh flex-col">
@@ -147,7 +157,7 @@ function PlayerController({ code, session }: { code: string; session: TeamSessio
           <p className="truncate font-display text-lg font-bold">{session.name}</p>
           <p className="text-xs text-muted">
             Room {code}
-            {row ? ` · ${row.score} pts · #${row.rank}` : ""}
+            {row ? ` · ${row.score} pts${headerRank ? ` · ${headerRank}` : ""}` : ""}
           </p>
         </div>
         <ConnectionDot connected={room.connected} />
@@ -277,8 +287,9 @@ function Screen({
       return (
         <Centered>
           <p className="text-sm uppercase tracking-[0.3em] text-muted">Your position</p>
-          <p className="mt-4 font-mono text-8xl font-black text-gold tabular animate-pop">{view.rank ? `#${view.rank}` : "–"}</p>
+          <p className="mt-4 font-mono text-8xl font-black text-gold tabular animate-pop">{view.rank ? `#${view.rank}${view.shared ? "=" : ""}` : "–"}</p>
           <p className="mt-2 text-muted">of {view.team_count} teams</p>
+          {view.shared ? <p className="mt-3 max-w-xs text-sm text-white/80">Level on score with another team. If it matters for qualifying, the tie-break decides.</p> : null}
           {view.movement ? (
             <p className={cx("mt-4 font-bold", view.movement > 0 ? "text-good" : "text-bad")}>
               {view.movement > 0 ? `▲ up ${view.movement}` : `▼ down ${-view.movement}`}
@@ -287,6 +298,19 @@ function Screen({
           <p className="mt-8 text-4xl">
             <Odometer key={`${view.previous_score}:${view.score}`} from={view.previous_score ?? 0} value={view.score} delayMs={400} />
             <span className="ml-2 text-xl text-muted">pts</span>
+          </p>
+        </Centered>
+      );
+
+    case "TIE_BREAK":
+      return (
+        <Centered>
+          <p className="text-sm uppercase tracking-[0.3em] text-gold">Tie-break at the cut</p>
+          <p className="mt-4 font-headline text-5xl animate-pop">{view.in_tie ? "You're in it!" : "Look at the big screen"}</p>
+          <p className="mt-4 max-w-xs text-white/80">
+            {view.in_tie
+              ? `Your team is one of the teams level on ${view.score} points at the cut. Correct answers decide, then time. Watch the big screen.`
+              : `Some teams are level on ${view.score} points at the cut. Correct answers decide, then time.`}
           </p>
         </Centered>
       );
@@ -306,6 +330,13 @@ function Screen({
           <div className="text-7xl grayscale">🍺</div>
           <p className="mt-6 font-headline text-6xl text-bad animate-rise">Eliminated</p>
           <p className="mt-3 text-lg text-white/80">You finished {view.rank ? `#${view.rank}` : "outside the top"}. Good game!</p>
+          {view.tie_reason ? (
+            <p className="mt-4 max-w-xs rounded-xl bg-white/10 px-4 py-3 text-sm text-white/85">
+              {view.tie_reason.by === "CORRECT"
+                ? `Same score as the last team through, but ${view.tie_reason.behind} fewer correct answer${view.tie_reason.behind === 1 ? "" : "s"}.`
+                : `Same score and correct answers as the last team through, but ${formatTieTime(view.tie_reason.behind_ms)} slower in total.`}
+            </p>
+          ) : null}
         </div>
       );
 

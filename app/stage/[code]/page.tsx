@@ -7,6 +7,7 @@ import { ConnectionDot, Logo, Spinner, cx } from "@/components/ui";
 import { Countdown, FitText, QuestionMedia, SafeImage, StageChoice, stageChoiceColumns } from "@/components/game";
 import { Leaderboard } from "@/components/Leaderboard";
 import { QualificationReveal } from "@/components/QualificationReveal";
+import { TieBreakReveal } from "@/components/TieBreak";
 import { QrCode } from "@/components/QrCode";
 import { Particles } from "@/components/Particles";
 import type { MediaControl, ScoreRow } from "@/lib/game/types";
@@ -374,10 +375,13 @@ function StageScreen({
             Leaderboard <span className="text-2xl font-semibold text-muted">after {view.after_question} of {view.total}</span>
           </h1>
           <div className="min-h-0 flex-1 overflow-hidden">
-            <Leaderboard rows={view.rows} limit={10} final={view.after_question >= view.total} />
+            <Leaderboard rows={view.rows} limit={10} final={view.final} byScore={view.final} />
           </div>
         </div>
       );
+
+    case "TIE_BREAK":
+      return <TieBreakReveal tb={view.tie_break} />;
 
     case "QUALIFICATION":
       return <QualificationReveal qualified={view.qualified} eliminated={view.eliminated} qualifyCount={view.qualify_count} />;

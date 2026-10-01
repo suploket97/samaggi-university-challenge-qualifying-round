@@ -10,6 +10,7 @@ import type {
   SpeedTier,
   Submission,
   Team,
+  TieBreakPayload,
 } from "./types";
 import { DECAY_FLOOR } from "./types";
 import { markSequence, sequenceLength, sequenceReviewKey } from "./sequence";
@@ -439,4 +440,60 @@ export function rankTeams(
     });
   });
   return out;
+}
+
+/**
+ * Where the qualification cut falls: the last rank that still qualifies.
+ * A team tied (score, correct answers and time) with that rank qualifies too.
+ */
+export function qualifiedIds(standings: ScoreRow[], qualifyCount: number): string[] {
+  if (!standings.length) return [];
+  const cutoffRank = standings[Math.min(qualifyCount, standings.length) - 1].rank;
+  return standings.filter((r) => r.rank <= cutoffRank).map((r) => r.team_id);
+}
+
+/**
+ * The teams level on score at the cut, if the cut falls inside such a group
+ * (the tie-break, not the score, decides who goes through). Null otherwise.
+ */
+export function cutTieBreak(standings: ScoreRow[], qualifyCount: number): TieBreakPayload | null {
+  if (qualifyCount < 1 || qualifyCount >= standings.length) return null;
+  const passed = new Set(qualifiedIds(standings, qualifyCount));
+  const score = standings[qualifyCount - 1].score;
+  const group = standings.filter((r) => r.score === score);
+  // standings are sorted by score first, so the group is one contiguous run; it straddles the cut if it runs past it
+  if (standings[qualifyCount].score !== score) return null;
+  const rows = group.map((r) => ({ ...r, qualified: passed.has(r.team_id) }));
+  const lastIn = [...rows].reverse().find((r) => r.qualified);
+  const firstOut = rows.find((r) => !r.qualified);
+  const decided_by: TieBreakPayload["decided_by"] = !lastIn || !firstOut ? "NONE" : lastIn.correct_count !== firstOut.correct_count ? "CORRECT" : "TIME";
+  return { qualify_count: qualifyCount, score, decided_by, rows };
+}
+
+/**
+ * Display position by score alone ("4=" when teams share a score), for the
+ * final table before the tie-break is shown. Teams sharing a score are listed
+ * by name so the order doesn't give the tie-break away.
+ */
+export function rowsByScore(rows: ScoreRow[]): (ScoreRow & { position: number; shared: boolean })[] {
+  const sorted = [...rows].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  return sorted.map((r, i) => {
+    const position = sorted.findIndex((x) => x.score === r.score) + 1;
+    const shared = sorted.filter((x) => x.score === r.score).length > 1;
+    return { ...r, position, shared };
+  });
+}
+
+/** Why an eliminated team that was level on score with the last qualifier missed out. */
+export function tieBreakReason(standings: ScoreRow[], qualified: string[], teamId: string):
+  | { by: "CORRECT"; behind: number }
+  | { by: "TIME"; behind_ms: number }
+  | null {
+  const passed = new Set(qualified);
+  if (passed.has(teamId)) return null;
+  const me = standings.find((r) => r.team_id === teamId);
+  const lastIn = [...standings].reverse().find((r) => passed.has(r.team_id));
+  if (!me || !lastIn || me.score !== lastIn.score) return null;
+  if (me.correct_count !== lastIn.correct_count) return { by: "CORRECT", behind: lastIn.correct_count - me.correct_count };
+  return { by: "TIME", behind_ms: me.total_correct_time_ms - lastIn.total_correct_time_ms };
 }

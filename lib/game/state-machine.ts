@@ -14,6 +14,7 @@
  *                                  └────────────START_QUESTION (next)──── LEADERBOARD
  *                                                                               │
  *                          (from REVEAL_ANSWER or LEADERBOARD) SHOW_QUALIFICATION
+ *                          or, when teams are level on score at the cut, SHOW_TIE_BREAK ──▶ TIE_BREAK ──SHOW_QUALIFICATION
  *                                                                               ▼
  *                                                                   QUALIFICATION_REVEAL
  *   TERMINATE from any phase ──▶ ENDED
@@ -22,6 +23,7 @@ import type {
   PublicQuestion,
   QualificationPayload,
   RevealPayload,
+  TieBreakPayload,
   RoomCommand,
   RoomPhase,
   RoomState,
@@ -70,11 +72,18 @@ export const TRANSITIONS: Record<RoomPhase, Partial<Record<CommandType, RoomPhas
   REVEAL_ANSWER: {
     SHOW_LEADERBOARD: "LEADERBOARD",
     START_QUESTION: "PLAYING",
+    SHOW_TIE_BREAK: "TIE_BREAK",
     SHOW_QUALIFICATION: "QUALIFICATION_REVEAL",
     TERMINATE: "ENDED",
   },
   LEADERBOARD: {
     START_QUESTION: "PLAYING",
+    SHOW_TIE_BREAK: "TIE_BREAK",
+    SHOW_QUALIFICATION: "QUALIFICATION_REVEAL",
+    TERMINATE: "ENDED",
+  },
+  TIE_BREAK: {
+    SHOW_LEADERBOARD: "LEADERBOARD", // back to the table, e.g. to change the number qualifying
     SHOW_QUALIFICATION: "QUALIFICATION_REVEAL",
     TERMINATE: "ENDED",
   },
@@ -114,6 +123,7 @@ export type ResolvedEvent =
   | { type: "TIMER_EXPIRED" }
   | { type: "REVEAL_ANSWER"; reveal: RevealPayload; leaderboard: ScoreRow[] }
   | { type: "SHOW_LEADERBOARD" }
+  | { type: "SHOW_TIE_BREAK"; tie_break: TieBreakPayload }
   | { type: "SHOW_QUALIFICATION"; qualification: QualificationPayload }
   | { type: "MEDIA"; action: "PLAY" | "PAUSE" | "RESTART" }
   | { type: "TERMINATE" };
@@ -136,6 +146,7 @@ export function createInitialState(
     reveal: null,
     leaderboard: [],
     qualification: null,
+    tie_break: null,
     media: null,
     settings: { ...DEFAULT_SETTINGS, ...settings },
     created_at: now,
@@ -216,6 +227,9 @@ export function transition(state: RoomState, ev: ResolvedEvent, now: number): Ro
         throw new GameError("BAD_REQUEST", "This question has no sound or video");
       }
       return { ...base, media: { action: ev.action, seq: (state.media?.seq ?? 0) + 1 } };
+
+    case "SHOW_TIE_BREAK":
+      return { ...base, tie_break: ev.tie_break };
 
     case "SHOW_QUALIFICATION":
       return { ...base, qualification: ev.qualification };

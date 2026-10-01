@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { PublicSnapshot } from "@/lib/game/engine";
 import { QUESTION_TYPE_LABEL, type AntiCheatFlag, type AdminCommand, type RoomSettings } from "@/lib/game/types";
 import { adminView } from "@/lib/game/projections";
+import { cutTieBreak } from "@/lib/game/scoring";
 import { api, ApiError } from "@/lib/client/api";
 import { useAutoTick, useNow, usePoll, useRoom } from "@/lib/client/hooks";
 import { Button, Card, ConnectionDot, ErrorNote, Spinner, cx, inputCls } from "@/components/ui";
@@ -10,6 +11,8 @@ import { ChoiceBadge, Countdown, choiceTileStyle } from "@/components/game";
 import { QrCode } from "@/components/QrCode";
 import { AdminShell } from "./AdminShell";
 import { ReviewPanel } from "./ReviewPanel";
+import { CorrectionCard } from "./CorrectionCard";
+import { TeamActions } from "./TeamActions";
 import type { ReviewPayload } from "@/lib/game/review";
 import { PhaseBadge } from "./AdminHome";
 
@@ -63,6 +66,7 @@ export function RoomControl({ code }: { code: string }) {
   // A review change shows at once; the next poll (a moment later) carries it too.
   const [localReview, setLocalReview] = useState<{ r: ReviewPayload; until: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [teamMenu, setTeamMenu] = useState<string | null>(null);
   const [origin, setOrigin] = useState("");
   useEffect(() => setOrigin(window.location.origin), []);
 
@@ -115,6 +119,8 @@ export function RoomControl({ code }: { code: string }) {
   const av = adminView(snap, now + room.offset);
   const q = snap.current_question;
   const isLast = snap.total_questions > 0 && snap.current_question_index + 1 >= snap.total_questions;
+  // Teams level on score at the cut? Then the tie-break step is offered (the server checks again).
+  const cutTie = av.buttons.showTieBreak ? cutTieBreak(snap.leaderboard, qualifyCount) : null;
   const teamCount = status?.teams.length ?? snap.leaderboard.length;
   const joinUrl = `${origin}/play?code=${code}`;
   // Only trust the answer if the status poll is about the question currently on screen.
@@ -226,8 +232,8 @@ export function RoomControl({ code }: { code: string }) {
                 </>
               ) : null}
               {av.buttons.showLeaderboard ? (
-                <Button size="lg" variant={snap.phase === "REVEAL_ANSWER" && !isLast ? "secondary" : "primary"} loading={busy === "lb"} onClick={() => send({ type: "SHOW_LEADERBOARD" }, "lb")}>
-                  🏆 {snap.phase === "QUALIFICATION_REVEAL" ? "Show full table" : "Leaderboard"}
+                <Button size="lg" variant={(snap.phase === "REVEAL_ANSWER" && !isLast) || snap.phase === "TIE_BREAK" ? "secondary" : "primary"} loading={busy === "lb"} onClick={() => send({ type: "SHOW_LEADERBOARD" }, "lb")}>
+                  🏆 {snap.phase === "QUALIFICATION_REVEAL" ? "Show full table" : snap.phase === "TIE_BREAK" ? "Back to leaderboard" : "Leaderboard"}
                 </Button>
               ) : null}
             </div>
@@ -265,16 +271,43 @@ export function RoomControl({ code }: { code: string }) {
               </div>
             ) : null}
 
-            {av.buttons.showQualification ? (
-              <div className={cx("mt-5 flex flex-wrap items-end gap-3 rounded-xl border p-4", isLast ? "border-gold/50 bg-gold/5" : "border-line")}>
-                <label className="block">
-                  <span className="mb-1 block text-sm text-muted">Teams that qualify</span>
-                  <input type="number" min={1} className={inputCls("w-32")} value={qualifyCount} onChange={(e) => setQualifyCount(Math.max(1, Number(e.target.value) || 1))} />
-                </label>
-                <Button variant={isLast ? "primary" : "secondary"} loading={busy === "qual"} onClick={() => send({ type: "SHOW_QUALIFICATION", qualify_count: qualifyCount }, "qual")}>
-                  🎬 Reveal qualified teams
+            {av.buttons.showQualification && snap.phase === "TIE_BREAK" && snap.tie_break ? (
+              <div className="mt-5 flex flex-wrap items-center gap-3 rounded-xl border border-gold/50 bg-gold/5 p-4">
+                <Button variant="primary" loading={busy === "qual"} onClick={() => send({ type: "SHOW_QUALIFICATION", qualify_count: snap.tie_break!.qualify_count }, "qual")}>
+                  🎬 Reveal qualified teams (top {snap.tie_break.qualify_count})
                 </Button>
-                <p className="text-sm text-muted">{isLast ? "That was the last question." : "You can also do this mid-game, e.g. at the end of a round."}</p>
+                <p className="text-sm text-muted">The big screen is showing the tie-break. To change how many qualify, go back to the leaderboard.</p>
+              </div>
+            ) : av.buttons.showQualification ? (
+              <div className={cx("mt-5 rounded-xl border p-4", isLast ? "border-gold/50 bg-gold/5" : "border-line")}>
+                <div className="flex flex-wrap items-end gap-3">
+                  <label className="block">
+                    <span className="mb-1 block text-sm text-muted">Teams that qualify</span>
+                    <input type="number" min={1} className={inputCls("w-32")} value={qualifyCount} onChange={(e) => setQualifyCount(Math.max(1, Number(e.target.value) || 1))} />
+                  </label>
+                  {cutTie && av.buttons.showTieBreak ? (
+                    <>
+                      <Button variant="primary" loading={busy === "tie"} onClick={() => send({ type: "SHOW_TIE_BREAK", qualify_count: qualifyCount }, "tie")}>
+                        ⚖️ Show tie-break
+                      </Button>
+                      <Button variant="secondary" loading={busy === "qual"} onClick={() => send({ type: "SHOW_QUALIFICATION", qualify_count: qualifyCount }, "qual")}>
+                        Skip to qualified teams
+                      </Button>
+                    </>
+                  ) : (
+                    <Button variant={isLast ? "primary" : "secondary"} loading={busy === "qual"} onClick={() => send({ type: "SHOW_QUALIFICATION", qualify_count: qualifyCount }, "qual")}>
+                      🎬 Reveal qualified teams
+                    </Button>
+                  )}
+                  <p className="text-sm text-muted">{isLast ? "That was the last question." : "You can also do this mid-game, e.g. at the end of a round."}</p>
+                </div>
+                {cutTie ? (
+                  <p className="mt-3 rounded-lg bg-gold/10 px-3 py-2 text-sm text-gold">
+                    ⚖️ {cutTie.rows.length} teams are level on {cutTie.score} points at the cut ({cutTie.rows.map((r) => r.name).join(", ")}).{" "}
+                    {cutTie.decided_by === "CORRECT" ? "Correct answers separate them." : cutTie.decided_by === "TIME" ? "Same correct answers too: time separates them." : "They are level on everything, so all of them go through."}{" "}
+                    Show the tie-break first so the room sees why.
+                  </p>
+                ) : null}
               </div>
             ) : null}
             <div className="mt-4"><ErrorNote>{error}</ErrorNote></div>
@@ -432,6 +465,19 @@ export function RoomControl({ code }: { code: string }) {
               }}
             />
           ) : null}
+
+          {/* ---------------- Challenges upheld after a reveal ---------------- */}
+          {(snap.phase === "REVEAL_ANSWER" || snap.phase === "LEADERBOARD") && snap.current_question_index >= 0 ? (
+            <CorrectionCard
+              key={snap.current_question_index}
+              code={code}
+              revealedCount={snap.current_question_index + 1}
+              onChanged={() => {
+                void room.refresh();
+                reload();
+              }}
+            />
+          ) : null}
         </div>
 
         {/* ---------------- Teams ---------------- */}
@@ -446,14 +492,15 @@ export function RoomControl({ code }: { code: string }) {
               {status.teams.map((t) => {
                 const qFlags = t.flags.filter((f) => f.question_index === snap.current_question_index);
                 return (
-                  <li key={t.team_id} className="flex items-center gap-3 py-2">
+                  <li key={t.team_id} className="py-2">
+                  <div className="flex items-center gap-3">
                     <span className="w-8 text-right text-sm text-muted tabular">{t.rank ?? "–"}</span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-semibold">{t.name}</span>
                       {t.flags.length ? (
-                        <span className="text-xs text-bad" title={t.flags.map((f) => `Q${f.question_index + 1}: ${f.kind}${f.duration_ms ? ` ${Math.round(f.duration_ms / 1000)}s` : ""}`).join("\n")}>
+                        <span className="text-xs text-bad" title={t.flags.map((f) => `Q${f.question_index + 1}: ${FLAG_LABEL[f.kind] ?? f.kind}${f.duration_ms ? ` ${Math.round(f.duration_ms / 1000)}s` : ""}`).join("\n")}>
                           ⚠ {t.flags.length} flag{t.flags.length > 1 ? "s" : ""}
-                          {qFlags.length ? " (this question)" : ""}
+                          {qFlags.length ? ` (this question: ${[...new Set(qFlags.map((f) => FLAG_LABEL[f.kind] ?? f.kind))].join(", ")})` : ""}
                         </span>
                       ) : null}
                     </span>
@@ -467,6 +514,29 @@ export function RoomControl({ code }: { code: string }) {
                       )
                     ) : null}
                     <span className="w-14 text-right font-mono font-bold tabular">{t.score}</span>
+                    {snap.phase !== "ENDED" ? (
+                      <button
+                        type="button"
+                        className={cx("grid h-7 w-7 place-items-center rounded-lg text-muted hover:bg-panel-2 hover:text-white", teamMenu === t.team_id && "bg-panel-2 text-white")}
+                        aria-label={`Options for ${t.name}`}
+                        onClick={() => setTeamMenu((m) => (m === t.team_id ? null : t.team_id))}
+                      >
+                        ⋯
+                      </button>
+                    ) : null}
+                  </div>
+                  {teamMenu === t.team_id ? (
+                    <TeamActions
+                      key={t.team_id + t.name}
+                      code={code}
+                      team={t}
+                      canRemove={snap.phase !== "QUALIFICATION_REVEAL" && snap.phase !== "TIE_BREAK"}
+                      onDone={() => {
+                        void room.refresh();
+                        reload();
+                      }}
+                    />
+                  ) : null}
                   </li>
                 );
               })}
@@ -479,6 +549,12 @@ export function RoomControl({ code }: { code: string }) {
 }
 
 const TYPE_LABEL: Record<string, string> = QUESTION_TYPE_LABEL;
+
+const FLAG_LABEL: Record<string, string> = {
+  FOCUS_LOST: "left the screen",
+  WINDOW_BLUR: "another window in front",
+  PASTE_ATTEMPT: "tried to paste",
+};
 
 const SCORING_SHORT: Record<string, string> = {
   CLASSIC: "Classic scoring (speed bonus)",
@@ -493,6 +569,7 @@ function phaseHeadline(p: PublicSnapshot["phase"]): string {
     case "SUBMITTED_WAITING": return "Answers locked — ready to reveal";
     case "REVEAL_ANSWER": return "Answer revealed";
     case "LEADERBOARD": return "Showing leaderboard";
+    case "TIE_BREAK": return "Showing the tie-break at the cut";
     case "QUALIFICATION_REVEAL": return "Qualification reveal";
     case "ENDED": return "Game over";
   }

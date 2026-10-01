@@ -11,6 +11,7 @@
  *   room:{code}:team_names          HASH    lower(name) -> team_id   (uniqueness via HSETNX)
  *   room:{code}:answers:{qIndex}    HASH    team_id -> JSON Submission (first write wins via HSETNX)
  *   room:{code}:marks:{qIndex}      HASH    review key -> JSON MarkOverride (host's marking changes)
+ *   room:{code}:result:{qIndex}     STRING  JSON QuestionResultRecord (what each team got at the reveal)
  *
  * Why this copes with everyone answering at once:
  *   - A submission is ONE HSETNX: no read-modify-write, no lock, no contention
@@ -19,7 +20,7 @@
  *     REVEAL and written with the state in one versioned write.
  *   - Postgres (the question bank) is never touched on the answer path.
  */
-import type { RoomState, Submission, Team } from "./types";
+import type { QuestionResultRecord, RoomState, Submission, Team } from "./types";
 import type { MarkOverride, Overrides } from "./scoring";
 
 export interface RoomSummary {
@@ -49,6 +50,11 @@ export interface RoomStore {
   getOverrides(code: string, qIndex: number): Promise<Overrides>;
   /** value null removes the override. */
   setOverride(code: string, qIndex: number, key: string, value: MarkOverride | null): Promise<void>;
+
+  putQuestionResult(code: string, qIndex: number, rec: QuestionResultRecord): Promise<void>;
+  getQuestionResult(code: string, qIndex: number): Promise<QuestionResultRecord | null>;
+  renameTeam(code: string, team: Team, newName: string): Promise<"OK" | "NAME_TAKEN">;
+  removeTeam(code: string, team: Team): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +90,7 @@ const k = {
   names: (c: string) => `room:${c}:team_names`,
   answers: (c: string, q: number) => `room:${c}:answers:${q}`,
   marks: (c: string, q: number) => `room:${c}:marks:${q}`,
+  result: (c: string, q: number) => `room:${c}:result:${q}`,
 };
 
 /**
@@ -151,7 +158,7 @@ export class RedisRoomStore implements RoomStore {
 
   async deleteRoom(code: string) {
     const state = await this.getState(code);
-    const answerKeys = state ? state.question_ids.flatMap((_, i) => [k.answers(code, i), k.marks(code, i)]) : [];
+    const answerKeys = state ? state.question_ids.flatMap((_, i) => [k.answers(code, i), k.marks(code, i), k.result(code, i)]) : [];
     await this.r.del(k.state(code), k.version(code), k.teams(code), k.names(code), ...answerKeys);
     await this.r.srem(k.index, code);
   }
@@ -216,6 +223,32 @@ export class RedisRoomStore implements RoomStore {
       await this.r.hdel(hk, key);
     }
   }
+
+  async putQuestionResult(code: string, qIndex: number, rec: QuestionResultRecord) {
+    await this.r.set(k.result(code, qIndex), JSON.stringify(rec), { ex: ROOM_TTL_SEC });
+  }
+
+  async getQuestionResult(code: string, qIndex: number) {
+    const raw = await this.r.get(k.result(code, qIndex));
+    return raw ? (JSON.parse(raw) as QuestionResultRecord) : null;
+  }
+
+  async renameTeam(code: string, team: Team, newName: string) {
+    const oldKey = team.name.trim().toLowerCase();
+    const newKey = newName.trim().toLowerCase();
+    if (newKey !== oldKey) {
+      const claimed = await this.r.hsetnx(k.names(code), newKey, team.team_id);
+      if (!claimed) return "NAME_TAKEN" as const;
+      await this.r.hdel(k.names(code), oldKey);
+    }
+    await this.saveTeam(code, { ...team, name: newName });
+    return "OK" as const;
+  }
+
+  async removeTeam(code: string, team: Team) {
+    await this.r.hdel(k.teams(code), team.team_id);
+    await this.r.hdel(k.names(code), team.name.trim().toLowerCase());
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +261,7 @@ export class MemoryRoomStore implements RoomStore {
   private names = new Map<string, Map<string, string>>();
   private answers = new Map<string, Map<string, Submission>>();
   private marks = new Map<string, Overrides>();
+  private results = new Map<string, string>();
 
   async getState(code: string) {
     const raw = this.states.get(code);
@@ -301,5 +335,29 @@ export class MemoryRoomStore implements RoomStore {
     if (value) m[key] = value;
     else delete m[key];
     this.marks.set(`${code}:${qIndex}`, m);
+  }
+  async putQuestionResult(code: string, qIndex: number, rec: QuestionResultRecord) {
+    this.results.set(`${code}:${qIndex}`, JSON.stringify(rec));
+  }
+  async getQuestionResult(code: string, qIndex: number) {
+    const raw = this.results.get(`${code}:${qIndex}`);
+    return raw ? (JSON.parse(raw) as QuestionResultRecord) : null;
+  }
+  async renameTeam(code: string, team: Team, newName: string) {
+    const names = this.names.get(code) ?? new Map<string, string>();
+    const oldKey = team.name.trim().toLowerCase();
+    const newKey = newName.trim().toLowerCase();
+    if (newKey !== oldKey) {
+      if (names.has(newKey)) return "NAME_TAKEN" as const;
+      names.set(newKey, team.team_id);
+      names.delete(oldKey);
+      this.names.set(code, names);
+    }
+    this.teams.get(code)?.set(team.team_id, { ...team, name: newName });
+    return "OK" as const;
+  }
+  async removeTeam(code: string, team: Team) {
+    this.teams.get(code)?.delete(team.team_id);
+    this.names.get(code)?.delete(team.name.trim().toLowerCase());
   }
 }

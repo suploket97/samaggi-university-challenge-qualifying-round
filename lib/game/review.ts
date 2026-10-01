@@ -39,6 +39,8 @@ export interface ReviewGroup {
 export interface ReviewPayload {
   question_index: number;
   question_id: string;
+  /** Shown when correcting a question after its reveal, so the host knows which one it is. */
+  question_text?: string;
   type: BankQuestion["type"];
   groups: ReviewGroup[];
   /** Sub-questions: the part prompts, in order. */
@@ -165,6 +167,7 @@ export function buildReview(
   return {
     question_index: questionIndex,
     question_id: q.question_id,
+    question_text: q.question_text,
     type: q.type,
     groups,
     parts: q.type === "SUB_QUESTIONS_TEXT" ? (q.sub_questions ?? []).map((sq) => sq.prompt) : null,

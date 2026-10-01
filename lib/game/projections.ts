@@ -7,7 +7,8 @@
  * `serverNow` = Date.now() + clockOffset, where clockOffset is measured from
  * snapshot.server_now when the snapshot arrives. All countdowns use it.
  */
-import type { PublicQuestion, RevealPayload, ScoreRow } from "./types";
+import type { PublicQuestion, RevealPayload, ScoreRow, TieBreakPayload } from "./types";
+import { rowsByScore, tieBreakReason } from "./scoring";
 import type { PublicSnapshot } from "./engine";
 
 export function remainingMs(s: PublicSnapshot, serverNow: number): number {
@@ -39,7 +40,9 @@ export type StageView =
       /** Teams that answered (not locked out), for "x of y" on the stage. */
       answered_team_count: number;
     }
-  | { screen: "LEADERBOARD"; rows: ScoreRow[]; after_question: number; total: number }
+  /** final = after the last question: positions go by score alone ("4="), so the table doesn't give the tie-break away. */
+  | { screen: "LEADERBOARD"; rows: ScoreRow[]; after_question: number; total: number; final: boolean }
+  | { screen: "TIE_BREAK"; tie_break: TieBreakPayload }
   | { screen: "QUALIFICATION"; qualified: ScoreRow[]; eliminated: ScoreRow[]; qualify_count: number }
   | { screen: "ENDED" };
 
@@ -69,8 +72,12 @@ export function stageView(s: PublicSnapshot, serverNow: number): StageView {
         answered_team_count: Object.values(r.results).filter((x) => x.answered && !x.voided_by_anti_cheat).length,
       };
     }
-    case "LEADERBOARD":
-      return { screen: "LEADERBOARD", rows: s.leaderboard, after_question: s.current_question_index + 1, total: s.total_questions };
+    case "LEADERBOARD": {
+      const final = s.total_questions > 0 && s.current_question_index + 1 >= s.total_questions;
+      return { screen: "LEADERBOARD", rows: s.leaderboard, after_question: s.current_question_index + 1, total: s.total_questions, final };
+    }
+    case "TIE_BREAK":
+      return { screen: "TIE_BREAK", tie_break: s.tie_break! };
     case "QUALIFICATION_REVEAL": {
       const q = s.qualification!;
       const passed = new Set(q.qualified_team_ids);
@@ -117,8 +124,12 @@ export type PlayerView =
       /** SUB_QUESTIONS_TEXT: which parts this team got right. */
       sub_correct: boolean[] | null;
     }
-  | { screen: "STANDING"; rank: number | null; score: number; previous_score: number | null; team_count: number; movement: number | null }
-  | { screen: "QUALIFICATION"; passed: boolean; rank: number | null }
+  /** shared: after the last question, another team has the same score (the tie-break comes later). */
+  | { screen: "STANDING"; rank: number | null; score: number; previous_score: number | null; team_count: number; movement: number | null; shared: boolean }
+  /** in_tie: this team is one of those level on score at the cut. */
+  | { screen: "TIE_BREAK"; in_tie: boolean; score: number }
+  /** tie_reason: eliminated although level on score with the last qualifier, and why. */
+  | { screen: "QUALIFICATION"; passed: boolean; rank: number | null; tie_reason: ReturnType<typeof tieBreakReason> }
   | { screen: "ENDED"; rank: number | null; score: number };
 
 const CONTROLS: Record<PublicQuestion["type"], Extract<PlayerView, { screen: "ANSWER" }>["controls"]> = {
@@ -172,20 +183,34 @@ export function playerView(s: PublicSnapshot, me: PlayerContext, serverNow: numb
         team_count,
       };
 
-    case "LEADERBOARD":
+    case "LEADERBOARD": {
+      const final = s.total_questions > 0 && s.current_question_index + 1 >= s.total_questions;
+      const byScore = final ? rowsByScore(s.leaderboard).find((r) => r.team_id === me.team_id) : undefined;
       return {
         screen: "STANDING",
-        rank: row?.rank ?? null,
+        rank: byScore ? byScore.position : row?.rank ?? null,
         score: row?.score ?? 0,
         previous_score: row?.previous_score ?? null,
         team_count,
-        movement: row && row.previous_rank !== null ? row.previous_rank - row.rank : null,
+        movement: row && row.previous_rank !== null ? row.previous_rank - (byScore?.position ?? row.rank) : null,
+        shared: byScore?.shared ?? false,
       };
+    }
+
+    case "TIE_BREAK": {
+      const tb = s.tie_break!;
+      return { screen: "TIE_BREAK", in_tie: tb.rows.some((r) => r.team_id === me.team_id), score: tb.score };
+    }
 
     case "QUALIFICATION_REVEAL": {
       const q = s.qualification!;
       const r = q.final_standings.find((x) => x.team_id === me.team_id);
-      return { screen: "QUALIFICATION", passed: q.qualified_team_ids.includes(me.team_id), rank: r?.rank ?? null };
+      return {
+        screen: "QUALIFICATION",
+        passed: q.qualified_team_ids.includes(me.team_id),
+        rank: r?.rank ?? null,
+        tie_reason: tieBreakReason(q.final_standings, q.qualified_team_ids, me.team_id),
+      };
     }
 
     case "ENDED":
@@ -217,6 +242,8 @@ export interface AdminView {
     adjustTime: boolean;
     revealAnswer: boolean;
     showLeaderboard: boolean;
+    /** Allowed now; the console only offers it when teams are level on score at the cut (see cutTieBreak). */
+    showTieBreak: boolean;
     showQualification: boolean;
     terminate: boolean;
   };
@@ -236,8 +263,9 @@ export function adminView(s: PublicSnapshot, serverNow: number): AdminView {
       endQuestion: p === "PLAYING",
       adjustTime: p === "PLAYING",
       revealAnswer: p === "SUBMITTED_WAITING",
-      showLeaderboard: p === "REVEAL_ANSWER" || p === "QUALIFICATION_REVEAL",
-      showQualification: p === "REVEAL_ANSWER" || p === "LEADERBOARD",
+      showLeaderboard: p === "REVEAL_ANSWER" || p === "QUALIFICATION_REVEAL" || p === "TIE_BREAK",
+      showTieBreak: p === "REVEAL_ANSWER" || p === "LEADERBOARD",
+      showQualification: p === "REVEAL_ANSWER" || p === "LEADERBOARD" || p === "TIE_BREAK",
       terminate: p !== "ENDED",
     },
   };

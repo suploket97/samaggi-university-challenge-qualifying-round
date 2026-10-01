@@ -26,6 +26,7 @@ import type {
   BankQuestion,
   PublicQuestion,
   QualificationPayload,
+  QuestionResultRecord,
   RevealPayload,
   RoomSettings,
   RoomState,
@@ -38,7 +39,7 @@ import { SCORING_MODES, isChoiceType, isSequenceType } from "./types";
 import { describeSequence, markSequence, publicSequence, sequenceKey, sequenceLength, toDisplayIds, toOwnIds } from "./sequence";
 import { GameError, assertCanApply, createInitialState, isAcceptingAnswers, transition } from "./state-machine";
 import type { ResolvedEvent } from "./state-machine";
-import { effectiveChoiceKey, rankTeams, scoreSubmission, subQuestionPoints } from "./scoring";
+import { cutTieBreak, effectiveChoiceKey, qualifiedIds, rankTeams, scoreSubmission, subQuestionPoints } from "./scoring";
 import type { MarkOverride, Tally, Verdict } from "./scoring";
 import { buildReview, findGroup, toOverride, type ReviewPayload } from "./review";
 import type { RoomStore } from "./store";
@@ -84,7 +85,7 @@ export interface Clock {
 
 export type AnswerResult =
   | { ok: true; received_at: number }
-  | { ok: false; reason: "NOT_ACCEPTING" | "ALREADY_ANSWERED" | "INVALID_ANSWER" | "FROZEN" | "UNKNOWN_TEAM" };
+  | { ok: false; reason: "NOT_ACCEPTING" | "ALREADY_ANSWERED" | "INVALID_ANSWER" | "FROZEN" | "UNKNOWN_TEAM" | "TEAM_MOVED" };
 
 // ---------------------------------------------------------------------------
 // Engine
@@ -218,6 +219,12 @@ export class GameEngine {
       case "MEDIA":
         if (!["PLAY", "PAUSE", "RESTART"].includes(cmd.action)) throw new GameError("BAD_REQUEST", "Unknown media action");
         return { event: { type: "MEDIA", action: cmd.action }, ctx: {} };
+      case "SHOW_TIE_BREAK": {
+        const { qualification } = await this.qualify(state, cmd.qualify_count);
+        const tie_break = cutTieBreak(qualification.final_standings, cmd.qualify_count);
+        if (!tie_break) throw new GameError("BAD_REQUEST", "No teams are level on score at the cut, so there is no tie-break to show");
+        return { event: { type: "SHOW_TIE_BREAK", tie_break }, ctx: {} };
+      }
       case "SHOW_QUALIFICATION": {
         const { qualification, teams } = await this.qualify(state, cmd.qualify_count);
         return { event: { type: "SHOW_QUALIFICATION", qualification }, ctx: { teams } };
@@ -242,7 +249,30 @@ export class GameEngine {
    * inside the REVEAL transition, so the running scoreboard is updated in the
    * same versioned write as the phase change.
    */
-  private async scoreCurrentQuestion(state: RoomState): Promise<{
+  private async scoreCurrentQuestion(state: RoomState) {
+    const qIndex = state.current_question_index;
+    const teams = await this.store.getTeams(state.room_code);
+    const scored = await this.scoreQuestion(state, qIndex, {
+      started_at: state.question_started_at!,
+      ends_at: state.question_ends_at ?? state.question_started_at!,
+      voided: new Set(teams.filter((t) => t.frozen_for_question === qIndex).map((t) => t.team_id)),
+      tallies: talliesOf(state.leaderboard),
+      teams,
+    });
+    // Kept so the host can correct this question's marking after the reveal.
+    await this.store.putQuestionResult(state.room_code, qIndex, scored.record);
+    return scored;
+  }
+
+  /**
+   * Scores every team for one question, adding to the given running tallies.
+   * Used at the reveal, and again when the host corrects a revealed question.
+   */
+  private async scoreQuestion(
+    state: RoomState,
+    qIndex: number,
+    at: { started_at: number; ends_at: number; voided: Set<string>; tallies: Record<string, Tally>; teams: Team[] },
+  ): Promise<{
     reveal: RevealPayload;
     leaderboard: ScoreRow[];
     question: BankQuestion;
@@ -250,45 +280,39 @@ export class GameEngine {
     answers: AnswerRecord[];
     teams: Team[];
     overrides: MarkOverride[];
+    record: QuestionResultRecord;
   }> {
-    const qIndex = state.current_question_index;
-    const [q, pack, teams, subs, overrides] = await Promise.all([
+    const teams = at.teams;
+    const [q, pack, subs, overrides] = await Promise.all([
       this.bank.getQuestion(state.question_ids[qIndex]),
       this.bank.getPack(state.quiz_pack_id!),
-      this.store.getTeams(state.room_code),
       this.store.getSubmissions(state.room_code, qIndex),
       this.store.getOverrides(state.room_code, qIndex),
     ]);
     if (!q || !pack) throw new GameError("BAD_REQUEST", "Question or pack missing from bank");
 
     const byTeam = new Map(subs.map((s) => [s.team_id, s]));
-    const tallies: Record<string, Tally> = {};
-    for (const row of state.leaderboard) {
-      tallies[row.team_id] = {
-        score: row.score,
-        correct_count: row.correct_count,
-        total_correct_time_ms: row.total_correct_time_ms,
-      };
-    }
+    const tallies = at.tallies;
+    const record: QuestionResultRecord = { started_at: at.started_at, ends_at: at.ends_at, voided: [...at.voided], results: {} };
 
     const results: RevealPayload["results"] = {};
     const distribution: Record<string, number> | null = isChoiceType(q.type) ? {} : null;
     if (distribution) for (const c of q.choices ?? []) distribution[c.choice_id] = 0;
     const timing = {
       mode: state.settings.scoring_mode ?? "CLASSIC",
-      limit_ms: (state.question_ends_at ?? 0) - (state.question_started_at ?? 0),
+      limit_ms: at.ends_at - at.started_at,
     };
     const basePoints = q.base_points ?? pack.default_base_points;
     const answers: AnswerRecord[] = [];
 
     for (const team of teams) {
       const sub = byTeam.get(team.team_id);
-      const voided = team.frozen_for_question === qIndex;
+      const voided = at.voided.has(team.team_id);
       const r = scoreSubmission(
         q,
         team.team_id,
         sub,
-        state.question_started_at!,
+        at.started_at,
         voided,
         { base_points: pack.default_base_points, speed_tiers: pack.speed_tiers },
         overrides,
@@ -302,6 +326,7 @@ export class GameEngine {
         voided_by_anti_cheat: r.voided_by_anti_cheat,
         ...(r.sub_correct ? { sub_correct: r.sub_correct } : {}),
       };
+      record.results[team.team_id] = { points: r.points, correct: r.correct, elapsed_ms: r.correct ? r.elapsed_ms ?? 0 : null };
       const t = (tallies[team.team_id] ??= { score: 0, correct_count: 0, total_correct_time_ms: 0 });
       t.score += r.points;
       if (r.correct) {
@@ -350,7 +375,7 @@ export class GameEngine {
     // Ordering / matching: the correct order (or pairs), with how many teams got each position right.
     const seqN = isSeq ? sequenceLength(q) : 0;
     const marked = isSeq
-      ? subs.filter((s) => (teams.find((t) => t.team_id === s.team_id)?.frozen_for_question ?? null) !== qIndex).map((s) => markSequence(seqN, s.answer).correct)
+      ? subs.filter((s) => !at.voided.has(s.team_id) && teams.some((t) => t.team_id === s.team_id)).map((s) => markSequence(seqN, s.answer).correct)
       : [];
     const sequence_reveal = isSeq
       ? sequenceKey(seqN).map((id, i) => ({
@@ -386,6 +411,7 @@ export class GameEngine {
       answers,
       teams,
       overrides: applied,
+      record,
     };
   }
 
@@ -458,6 +484,228 @@ export class GameEngine {
     return updated!.review;
   }
 
+  // ----- Correcting a question after its reveal ---------------------------
+
+  /**
+   * The review (grouped answers, marking) of a question that has already been
+   * revealed, so the host can uphold a challenge. Only between questions and
+   * before the qualified teams are shown.
+   */
+  async revealedReview(code: string, qIndex: number): Promise<ReviewPayload> {
+    const state = await this.getState(code);
+    const { question, review } = await this.loadRevealed(state, qIndex);
+    void question;
+    return review;
+  }
+
+  private async loadRevealed(state: RoomState, qIndex: number) {
+    if (!CORRECTION_PHASES.includes(state.phase)) {
+      throw new GameError("BAD_REQUEST", state.phase === "QUALIFICATION_REVEAL" || state.phase === "ENDED" || state.phase === "TIE_BREAK"
+        ? "Scores are final once the tie-break or the qualified teams are shown. Go back to the leaderboard first."
+        : "Corrections can be made between questions (after a reveal or on the leaderboard)");
+    }
+    if (!Number.isInteger(qIndex) || qIndex < 0 || qIndex > state.current_question_index) {
+      throw new GameError("BAD_REQUEST", "That question hasn't been revealed yet");
+    }
+    const [q, rec, teams, subs, overrides] = await Promise.all([
+      this.bank.getQuestion(state.question_ids[qIndex]),
+      this.store.getQuestionResult(state.room_code, qIndex),
+      this.store.getTeams(state.room_code),
+      this.store.getSubmissions(state.room_code, qIndex),
+      this.store.getOverrides(state.room_code, qIndex),
+    ]);
+    if (!q) throw new GameError("BAD_REQUEST", "Question missing from bank");
+    if (!rec) throw new GameError("BAD_REQUEST", "This question was revealed before corrections were possible (app updated during the game), so it can't be corrected here");
+    const voided = new Set(rec.voided);
+    // The review marks teams voided for this question the way they were at the reveal.
+    const asAtReveal = teams.map((t) => ({ ...t, frozen_for_question: voided.has(t.team_id) ? qIndex : null }));
+    return { question: q, rec, teams, subs, overrides, review: buildReview(q, qIndex, subs, asAtReveal, overrides) };
+  }
+
+  /**
+   * Upholds (or reverses) a challenge on a revealed question: marks a group of
+   * answers right or wrong, re-scores that question for every team and adjusts
+   * the leaderboard. Logged with each team's points before and after.
+   */
+  async correctRevealed(code: string, input: { question_index: number; key: string; verdict: Verdict | null }): Promise<{
+    review: ReviewPayload;
+    changes: { team_id: string; name: string; before: number; after: number }[];
+  }> {
+    if (input.verdict !== null && input.verdict !== "CORRECT" && input.verdict !== "WRONG") {
+      throw new GameError("BAD_REQUEST", "Verdict must be CORRECT, WRONG or null");
+    }
+    const qIndex = input.question_index;
+    const first = await this.loadRevealed(await this.getState(code), qIndex);
+    const group = findGroup(first.review, input.key);
+    if (!group) throw new GameError("BAD_REQUEST", "No answer like that was given for this question");
+    const now = this.clock.now();
+    const verdict = input.verdict === group.auto && group.partial === undefined ? null : input.verdict;
+    const previousOverride = first.overrides[group.key] ?? null;
+    await this.store.setOverride(code, qIndex, group.key, verdict ? toOverride(group, verdict, now) : null);
+
+    try {
+      for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
+        const state = await this.getState(code);
+        const { rec, teams } = await this.loadRevealed(state, qIndex);
+        // Take this question's old points out, then score it again with the new marking.
+        const tallies = talliesOf(state.leaderboard);
+        for (const [teamId, r] of Object.entries(rec.results)) {
+          const t = tallies[teamId];
+          if (!t) continue;
+          t.score -= r.points;
+          if (r.correct) {
+            t.correct_count -= 1;
+            t.total_correct_time_ms -= r.elapsed_ms ?? 0;
+          }
+        }
+        const scored = await this.scoreQuestion(state, qIndex, { started_at: rec.started_at, ends_at: rec.ends_at, voided: new Set(rec.voided), tallies, teams });
+        const next: RoomState = {
+          ...state,
+          version: state.version + 1,
+          updated_at: now,
+          leaderboard: scored.leaderboard,
+          // The answer on the big screen is this question: show the corrected marking.
+          reveal: state.reveal && state.reveal.question_index === qIndex ? scored.reveal : state.reveal,
+        };
+        if (!(await this.store.compareAndSetState(code, state.version, next))) continue;
+        await this.store.putQuestionResult(code, qIndex, scored.record);
+        try {
+          await this.publisher.publish(code, { kind: "state", snapshot: toPublicSnapshot(next, now) });
+        } catch (e) {
+          console.error("realtime publish failed", e);
+        }
+        const changes = teams
+          .map((t) => ({ team_id: t.team_id, name: t.name, before: rec.results[t.team_id]?.points ?? 0, after: scored.record.results[t.team_id]?.points ?? 0 }))
+          .filter((c) => c.before !== c.after);
+        await this.recordSafely(async () =>
+          this.recorder.onCorrection?.(next, now, {
+            question_index: qIndex,
+            question_id: scored.question.question_id,
+            key: group.key,
+            label: group.label,
+            part: group.part,
+            verdict,
+            auto: group.auto,
+            teams: group.team_names,
+            changes,
+          }, { question: scored.question, answers: scored.answers, overrides: scored.overrides }),
+        );
+        const after = await this.loadRevealed(next, qIndex);
+        return { review: after.review, changes };
+      }
+      throw new GameError("VERSION_CONFLICT", "Room changed concurrently, try again");
+    } catch (e) {
+      // The scores were not updated: put the marking back the way it was.
+      await this.store.setOverride(code, qIndex, group.key, previousOverride);
+      throw e;
+    }
+  }
+
+  // ----- Team management (host) --------------------------------------------
+
+  /** Writes a change that isn't a phase transition (team list, names) and broadcasts it. */
+  private async updateState(code: string, change: (s: RoomState) => RoomState | null): Promise<RoomState> {
+    for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
+      const state = await this.getState(code);
+      const changed = change(state);
+      if (!changed) return state;
+      const now = this.clock.now();
+      const next = { ...changed, version: state.version + 1, updated_at: now };
+      if (await this.store.compareAndSetState(code, state.version, next)) {
+        try {
+          await this.publisher.publish(code, { kind: "state", snapshot: toPublicSnapshot(next, now) });
+        } catch (e) {
+          console.error("realtime publish failed", e);
+        }
+        return next;
+      }
+    }
+    throw new GameError("VERSION_CONFLICT", "Room changed concurrently, try again");
+  }
+
+  async renameTeam(code: string, teamId: string, rawName: string): Promise<Team> {
+    const name = cleanTeamName(rawName);
+    const state = await this.getState(code);
+    if (state.phase === "ENDED") throw new GameError("BAD_REQUEST", "This game has finished");
+    const team = await this.store.getTeam(code, teamId);
+    if (!team) throw new GameError("BAD_REQUEST", "No such team");
+    const old = team.name;
+    if (old === name) return team;
+    if ((await this.store.renameTeam(code, team, name)) === "NAME_TAKEN") throw new GameError("BAD_REQUEST", "That team name is taken");
+    const rename = <T extends { team_id: string; name: string }>(rows: T[]) => rows.map((r) => (r.team_id === teamId ? { ...r, name } : r));
+    const next = await this.updateState(code, (s) => ({
+      ...s,
+      leaderboard: rename(s.leaderboard),
+      qualification: s.qualification ? { ...s.qualification, final_standings: rename(s.qualification.final_standings) } : s.qualification,
+      tie_break: s.tie_break ? { ...s.tie_break, rows: rename(s.tie_break.rows) } : s.tie_break ?? null,
+    }));
+    await this.recordSafely(async () => this.recorder.onEvent?.(next, this.clock.now(), "TEAM_RENAMED", null, { team_id: teamId, from: old, to: name }));
+    return { ...team, name };
+  }
+
+  /** Takes a team out of the game (a test entry, a duplicate). Its answers stop counting. */
+  async removeTeam(code: string, teamId: string): Promise<void> {
+    const state = await this.getState(code);
+    if (state.phase === "ENDED" || state.phase === "QUALIFICATION_REVEAL" || state.phase === "TIE_BREAK") {
+      throw new GameError("BAD_REQUEST", "Teams can't be removed once the tie-break or the qualified teams are shown");
+    }
+    const team = await this.store.getTeam(code, teamId);
+    if (!team) throw new GameError("BAD_REQUEST", "No such team");
+    const row = state.leaderboard.find((r) => r.team_id === teamId);
+    await this.store.removeTeam(code, team);
+    const teams = await this.store.getTeams(code);
+    const next = await this.updateState(code, (s) => {
+      if (!s.leaderboard.some((r) => r.team_id === teamId)) return null;
+      return { ...s, leaderboard: rankTeams(teams, talliesOf(s.leaderboard), s.leaderboard) };
+    });
+    await this.recordSafely(async () =>
+      this.recorder.onEvent?.(next, this.clock.now(), "TEAM_REMOVED", next.current_question_index >= 0 ? next.current_question_index : null, {
+        team_id: teamId,
+        name: team.name,
+        score: row?.score ?? 0,
+      }),
+    );
+  }
+
+  /** The host issues a one-time code so a team can carry on from a new device (e.g. the old one died). */
+  async startTransfer(code: string, teamId: string): Promise<{ transfer_code: string; expires_at: number }> {
+    const state = await this.getState(code);
+    if (state.phase === "ENDED") throw new GameError("BAD_REQUEST", "This game has finished");
+    const team = await this.store.getTeam(code, teamId);
+    if (!team) throw new GameError("BAD_REQUEST", "No such team");
+    const transfer_code = String(Math.floor(100000 + Math.random() * 900000));
+    const expires_at = this.clock.now() + TRANSFER_TTL_MS;
+    team.transfer = { code: transfer_code, expires_at };
+    await this.store.saveTeam(code, team);
+    await this.recordSafely(async () => this.recorder.onEvent?.(state, this.clock.now(), "DEVICE_MOVE_STARTED", null, { team_id: teamId, name: team.name }));
+    return { transfer_code, expires_at };
+  }
+
+  /**
+   * A new device enters the host's code: it becomes the team's device and the
+   * old one stops working. Returns the team and its new device number.
+   */
+  async claimTransfer(code: string, rawCode: string): Promise<{ team: Team; device: number }> {
+    const state = await this.getState(code);
+    if (state.phase === "ENDED") throw new GameError("BAD_REQUEST", "This game has finished");
+    const given = String(rawCode ?? "").replace(/\D/g, "");
+    const now = this.clock.now();
+    const team = given.length === 6 ? (await this.store.getTeams(code)).find((t) => t.transfer?.code === given && t.transfer.expires_at >= now) : undefined;
+    if (!team) throw new GameError("BAD_REQUEST", "That code isn't valid or has expired. Ask the host for a new one.");
+    team.device = (team.device ?? 0) + 1;
+    team.transfer = null;
+    await this.store.saveTeam(code, team);
+    await this.recordSafely(async () => this.recorder.onEvent?.(state, now, "DEVICE_MOVED", state.current_question_index >= 0 ? state.current_question_index : null, { team_id: team.team_id, name: team.name }));
+    return { team, device: team.device };
+  }
+
+  /** Whether a player's device is still the team's device. */
+  async teamStatus(code: string, teamId: string, device: number): Promise<"OK" | "UNKNOWN" | "MOVED"> {
+    const team = await this.store.getTeam(code, teamId);
+    if (!team) return "UNKNOWN";
+    return (team.device ?? 0) === device ? "OK" : "MOVED";
+  }
+
   private async qualify(state: RoomState, qualifyCount: number): Promise<{ qualification: QualificationPayload; teams: Team[] }> {
     if (!Number.isInteger(qualifyCount) || qualifyCount < 1) {
       throw new GameError("BAD_REQUEST", "qualify_count must be a positive integer");
@@ -469,11 +717,10 @@ export class GameEngine {
     );
     const standings = rankTeams(teams, tallies, state.leaderboard);
     // Rank-based cut: a team tied with the last qualifying rank also qualifies.
-    const cutoffRank = standings[Math.min(qualifyCount, standings.length) - 1]?.rank ?? 0;
     return {
       qualification: {
         qualify_count: qualifyCount,
-        qualified_team_ids: standings.filter((r) => r.rank <= cutoffRank).map((r) => r.team_id),
+        qualified_team_ids: qualifiedIds(standings, qualifyCount),
         final_standings: standings,
       },
       teams,
@@ -484,11 +731,10 @@ export class GameEngine {
 
   async joinTeam(code: string, rawName: string): Promise<Team> {
     const state = await this.getState(code);
-    if (state.phase === "ENDED" || state.phase === "QUALIFICATION_REVEAL") {
+    if (state.phase === "ENDED" || state.phase === "QUALIFICATION_REVEAL" || state.phase === "TIE_BREAK") {
       throw new GameError("BAD_REQUEST", "This game has finished");
     }
-    const name = rawName.trim().replace(/\s+/g, " ");
-    if (name.length < 2 || name.length > 32) throw new GameError("BAD_REQUEST", "Team name must be 2-32 characters");
+    const name = cleanTeamName(rawName);
 
     const team: Team = { team_id: this.newId(), name, joined_at: this.clock.now(), flags: [], frozen_for_question: null };
     const res = await this.store.addTeam(code, team, state.settings.max_teams);
@@ -502,10 +748,11 @@ export class GameEngine {
    * Hot path. One state read + one HSETNX. No scoring, no Postgres, no
    * full-state broadcast. Answers stay sealed until REVEAL.
    */
-  async submitAnswer(code: string, teamId: string, answer: string[]): Promise<AnswerResult> {
+  async submitAnswer(code: string, teamId: string, answer: string[], device = 0): Promise<AnswerResult> {
     const now = this.clock.now(); // stamp on arrival, before any awaits
     const [state, team] = await Promise.all([this.getState(code), this.store.getTeam(code, teamId)]);
     if (!team) return { ok: false, reason: "UNKNOWN_TEAM" };
+    if ((team.device ?? 0) !== device) return { ok: false, reason: "TEAM_MOVED" };
     if (!isAcceptingAnswers(state, now)) return { ok: false, reason: "NOT_ACCEPTING" };
     if (team.frozen_for_question === state.current_question_index) return { ok: false, reason: "FROZEN" };
 
@@ -532,18 +779,21 @@ export class GameEngine {
     code: string,
     teamId: string,
     durationMs: number,
-    kind: "FOCUS_LOST" | "PASTE_ATTEMPT" = "FOCUS_LOST",
+    kind: "FOCUS_LOST" | "PASTE_ATTEMPT" | "WINDOW_BLUR" = "FOCUS_LOST",
+    device = 0,
   ): Promise<{ flagged: boolean; frozen: boolean }> {
     const [state, team] = await Promise.all([this.getState(code), this.store.getTeam(code, teamId)]);
-    if (!team || state.phase !== "PLAYING") return { flagged: false, frozen: false };
+    if (!team || state.phase !== "PLAYING" || (team.device ?? 0) !== device) return { flagged: false, frozen: false };
     const duration = Math.max(0, Math.min(Number(durationMs) || 0, 10 * 60 * 1000));
-    if (kind === "FOCUS_LOST" && duration < state.settings.focus_violation_ms) return { flagged: false, frozen: false };
+    if (kind !== "PASTE_ATTEMPT" && duration < state.settings.focus_violation_ms) return { flagged: false, frozen: false };
 
     const qIndex = state.current_question_index;
     team.flags.push({ question_index: qIndex, kind, duration_ms: duration, at: this.clock.now() });
 
     // Freeze only for leaving the page before answering. Paste attempts are
-    // blocked in the browser anyway, so they're just recorded for the admin.
+    // blocked in the browser anyway, and another window in front of a visible
+    // quiz page (computers) can't be told apart from a stray click, so those
+    // are just recorded for the host and judges.
     let freeze = false;
     if (kind === "FOCUS_LOST" && state.settings.anti_cheat_policy === "VOID_CURRENT_ANSWER") {
       const already = await this.store.getSubmission(code, qIndex, teamId);
@@ -675,6 +925,24 @@ export class GameEngine {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Running totals from a leaderboard, as a fresh object the caller may change. */
+export function talliesOf(rows: ScoreRow[]): Record<string, Tally> {
+  return Object.fromEntries(rows.map((r) => [r.team_id, { score: r.score, correct_count: r.correct_count, total_correct_time_ms: r.total_correct_time_ms }]));
+}
+
+const TEAM_NAME_ERROR = "Team name must be 2-32 characters";
+function cleanTeamName(raw: string): string {
+  const name = String(raw ?? "").trim().replace(/\s+/g, " ");
+  if (name.length < 2 || name.length > 32) throw new GameError("BAD_REQUEST", TEAM_NAME_ERROR);
+  return name;
+}
+
+/** Phases in which a revealed question's marking may still be corrected. */
+export const CORRECTION_PHASES: RoomState["phase"][] = ["REVEAL_ANSWER", "LEADERBOARD"];
+
+/** How long a move-to-new-device code works. */
+export const TRANSFER_TTL_MS = 10 * 60 * 1000;
 
 /** The room's secret seed (rooms made before it existed fall back to something stable). */
 export function seedOf(state: Pick<RoomState, "secret_seed" | "room_code" | "created_at">): string {

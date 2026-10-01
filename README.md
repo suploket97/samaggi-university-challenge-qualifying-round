@@ -63,6 +63,8 @@ Upstash Redis (live game state). All three services have free plans.
 4. On your phone, scan the QR code on the stage and join with a team name.
 5. In the host console: **Load pack** → *(optionally pick a time)* **Start question 1** → *(add time with +10s, or press Lock answers now)* →
    **Reveal answer** → **Leaderboard** → **Next question** … → **Reveal qualified teams** → **End game**.
+   If teams are level on score at the qualifying cut, the console offers **Show tie-break** first: the big
+   screen compares those teams on correct answers, then time, before you reveal the qualified teams.
 
 ---
 
@@ -147,6 +149,21 @@ many teams sent it, which teams, and how it was marked automatically ("Exact mat
 - Every change is written to the **Competition log** at once (Timeline and full report), and each team's answer sheet says
   "Marked correct by the host during the review (automatic marking: …)".
 
+## Correcting a question after the reveal (challenge upheld)
+Between questions (after a reveal, or on the leaderboard) the console shows **Challenge upheld? → ✏️ Correct a revealed question**.
+Pick the question, then mark a group of answers right or wrong exactly as in the review. That question is re-scored for every
+team straight away and the leaderboard is adjusted; a note shows whose points changed (e.g. "Team A 0 → 100").
+Corrections close once the tie-break or the qualified teams are shown (go back to the leaderboard to reopen them). Each one is
+logged as "Correction after the reveal", with the points before and after, and the saved results for that question are replaced.
+
+## Managing teams
+Press **⋯** next to a team in the console:
+- **Rename** fixes a typo in a team name (the leaderboard and log follow).
+- **Move to a new device** gives a one-time 6-digit code (valid 10 minutes). On the new device the team opens the join page,
+  enters the room code and taps **Use the code from the host**. The team keeps its score and answers; the old device is signed out.
+- **Remove this team** takes a test entry or duplicate out of the game (not possible once the tie-break or qualified teams are shown).
+All three are written to the competition log.
+
 ## How scoring works
 When you create a room, choose one of three scoring modes (fixed for that game, and saved in the competition log):
 
@@ -164,13 +181,16 @@ Only the server's clock counts. Part marks (pick-all-that-apply, sub-questions, 
   Numbers (like years) must be exact.
 - **Ordering / matching:** the share of items in the right place, unless the question is set to all-or-nothing.
 - **Ties** (in every scoring mode) are decided by more correct answers, then less total time spent on correct answers.
-  Teams still tied at the qualifying cut-off all go through.
+  Teams still tied at the qualifying cut-off all go through. On the final leaderboard, teams on the same score
+  share a position ("4="), so the table doesn't give the tie-break away; the tie-break step shows it.
 
 ## Anti-cheat
 While a question is open, a player who leaves the quiz screen (switches app or tab) for longer than the
 allowed time (3 seconds by default) is flagged in your console. By default, their answer for that question is voided. You can
 choose **flag only** when creating a room. Copying, pasting and long-press menus are blocked on the player screen.
-This detection runs on the player's phone, so it deters casual searching but can't prove someone cheated.
+On a computer, another window in front of a quiz page that is still visible (for the same allowed time) is **flagged only**
+("another window in front"), never voided, because a click on the taskbar or address bar looks the same; judges decide.
+This detection runs on the player's device, so it deters casual searching but can't prove someone cheated.
 
 ## Free plan limits
 A typical night of 50 teams and 30 questions uses a small fraction of each free plan

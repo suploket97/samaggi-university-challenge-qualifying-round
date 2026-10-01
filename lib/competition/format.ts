@@ -193,6 +193,11 @@ const EVENT_TEXT: Record<string, (x: Record<string, unknown>) => string> = {
   ANSWER_REVEALED: (x) =>
     `Answer revealed${x.answered !== undefined ? ` · ${x.correct} of ${x.answered} answering teams correct` : ""}${Number(x.marking_changes) > 0 ? ` · ${x.marking_changes} marking change${Number(x.marking_changes) === 1 ? "" : "s"} by the host applied` : ""}`,
   LEADERBOARD_SHOWN: () => "Leaderboard shown",
+  TIE_BREAK_SHOWN: (x) => {
+    const by = x.decided_by === "CORRECT" ? "decided by correct answers" : x.decided_by === "TIME" ? "decided by total time on correct answers" : "level on all three, all go through";
+    const teams = Array.isArray(x.teams) ? (x.teams as { name: string; qualified: boolean }[]).map((t) => `${t.name}${t.qualified ? " ✓" : " ✗"}`).join(", ") : "";
+    return `Tie-break shown at the cut (top ${x.qualify_count}; teams level on ${x.score} points, ${by})${teams ? `: ${teams}` : ""}`;
+  },
   QUALIFIED_TEAMS_SHOWN: (x) => `Qualified teams revealed (top ${x.qualify_count}; ${x.qualified} through including ties)`,
   MARK_CHANGED: (x) => {
     const what = `${x.part !== null && x.part !== undefined ? `part ${Number(x.part) + 1}: ` : ""}“${x.label}”`;
@@ -200,6 +205,17 @@ const EVENT_TEXT: Record<string, (x: Record<string, unknown>) => string> = {
     if (x.verdict === null) return `Host review: ${what} back to automatic marking (${x.auto === "CORRECT" ? "correct" : "wrong"})${teams}`;
     return `Host review: ${what} marked ${x.verdict === "CORRECT" ? "correct" : "wrong"}; automatic marking said ${x.auto === "CORRECT" ? "correct" : "wrong"}${teams}`;
   },
+  MARK_CORRECTED: (x) => {
+    const what = `${x.part !== null && x.part !== undefined ? `part ${Number(x.part) + 1}: ` : ""}“${x.label}”`;
+    const verdict = x.verdict === null ? `back to automatic marking (${x.auto === "CORRECT" ? "correct" : "wrong"})` : `marked ${x.verdict === "CORRECT" ? "correct" : "wrong"}`;
+    const ch = Array.isArray(x.changes) ? (x.changes as { name: string; before: number; after: number }[]) : [];
+    const moved = ch.length ? ` · points changed: ${ch.map((c) => `${c.name} ${c.before}→${c.after}`).join(", ")}` : " · no points changed";
+    return `Correction after the reveal: ${what} ${verdict}${moved}`;
+  },
+  TEAM_RENAMED: (x) => `Host renamed team “${x.from}” to “${x.to}”`,
+  TEAM_REMOVED: (x) => `Host removed team “${x.name}” (${x.score} pts at the time)`,
+  DEVICE_MOVE_STARTED: (x) => `Host issued a code to move “${x.name}” to a new device`,
+  DEVICE_MOVED: (x) => `“${x.name}” moved to a new device (the old one was signed out)`,
   MEDIA_CONTROL: (x) => `Host ${x.action === "PLAY" ? "played" : x.action === "PAUSE" ? "paused" : "restarted"} the sound/video on the big screen`,
   GAME_ENDED: () => "Game ended",
   ROOM_DELETED: () => "Room deleted",
@@ -220,6 +236,7 @@ export function timeline(d: CompetitionDetail): TimelineItem[] {
     question_index: e.question_index,
     kind: e.kind,
     text: (EVENT_TEXT[e.kind] ?? (() => e.kind.replace(/_/g, " ").toLowerCase()))(e.detail ?? {}),
+    ...(["MARK_CORRECTED", "TEAM_REMOVED", "DEVICE_MOVED"].includes(e.kind) ? { warn: true } : {}),
   }));
   for (const t of d.competition.teams ?? []) {
     items.push({ at: t.joined_at ?? d.competition.created_at, question_index: null, kind: "TEAM_JOINED", text: "Joined", team: t.name });
@@ -230,7 +247,7 @@ export function timeline(d: CompetitionDetail): TimelineItem[] {
         kind: f.kind,
         team: t.name,
         warn: true,
-        text: f.kind === "PASTE_ATTEMPT" ? "Tried to paste into the answer box (blocked)" : `Left the quiz screen for ${seconds(f.duration_ms ?? 0)}`,
+        text: f.kind === "PASTE_ATTEMPT" ? "Tried to paste into the answer box (blocked)" : f.kind === "WINDOW_BLUR" ? `Another window was in front of the quiz for ${seconds(f.duration_ms ?? 0)} (computer; flag only)` : `Left the quiz screen for ${seconds(f.duration_ms ?? 0)}`,
       });
     }
   }
@@ -347,7 +364,7 @@ export function answerRows(d: CompetitionDetail): Row[] {
         "Seconds after start": a.elapsed_ms === null ? "" : Math.round(a.elapsed_ms / 100) / 10,
         "Order sent": order.get(a.team_id)?.pos ?? "",
         "Teams that answered": order.get(a.team_id)?.of ?? "",
-        "Anti-cheat flags": a.flags.map((f) => (f.kind === "PASTE_ATTEMPT" ? "paste attempt" : `left ${seconds(f.duration_ms ?? 0)}`)).join("; "),
+        "Anti-cheat flags": a.flags.map((f) => (f.kind === "PASTE_ATTEMPT" ? "paste attempt" : f.kind === "WINDOW_BLUR" ? `other window ${seconds(f.duration_ms ?? 0)}` : `left ${seconds(f.duration_ms ?? 0)}`)).join("; "),
       });
     }
   }
